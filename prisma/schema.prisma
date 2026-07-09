@@ -1,0 +1,94 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model ProgrammingProblem {
+  id                    Int      @id @default(autoincrement())
+  title                 String
+  difficulty            String
+  topics                Json     @default("[]")
+  description           String?
+  inputFormat           String?
+  outputFormat          String?
+  constraints           Json     @default("[]")
+  sampleInput           String?
+  sampleOutput          String?
+  explanation           String?
+  testCases             Json     @default("[]")
+  hiddenTestCases       Json     @default("[]")
+  starterCodeByLanguage Json     @default("{}")
+  officialSolutions     Json     @default("{}")
+  importedFileName      String?
+  status                String   @default("Draft")
+  availability          String   @default("Locked")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("programming_problems")
+}
+
+model SqlProblem {
+  id                    Int              @id @default(autoincrement())
+  title                 String
+  difficulty            String
+  category              String
+  description           String?
+  explanation           String?
+  schemaSql             String?
+  sampleDataSql         String?
+  expectedResultColumns Json             @default("[]")
+  expectedResultRows    Json             @default("[]")
+  hiddenDatasets        Json             @default("[]")
+  solutionQuery         String?
+  dbEngine              String           @default("MySQL")
+  ignoreRowOrder        Boolean          @default(false)
+  ignoreColumnOrder     Boolean          @default(false)
+  importedFileName      String?
+  status                String           @default("Draft")
+  availability          String           @default("Locked")
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  submissions           SqlSubmission[]
+
+  @@map("sql_problems")
+}
+
+model SqlSubmission {
+  id              Int        @id @default(autoincrement())
+  studentId       String
+  studentEmail    String
+  problemId       Int
+  problem         SqlProblem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  problemTitle    String
+  query           String
+  verdict         String
+  executionTimeMs Int
+  passedDatasets  Int
+  totalDatasets   Int
+  submittedAt     DateTime   @default(now())
+  profile         Profile    @relation(fields: [studentId], references: [id])
+
+  @@index([studentId])
+  @@index([problemId])
+  @@map("sql_submissions")
+}
+
+model Profile {
+  id             String          @id
+  email          String          @unique
+  fullName       String?
+  role           String          @default("student")
+  status         String          @default("active")
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  sqlSubmissions SqlSubmission[]
+
+  @@index([role, status])
+  @@map("profiles")
+}
