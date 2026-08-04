@@ -1,19 +1,22 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import type { User } from "@supabase/supabase-js";
+import type { SupabaseClient, User } from "@supabase/supabase-js";
 
 /**
  * Creates a Supabase client that reads/writes cookies via NextRequest and
  * NextResponse. Must only be used inside middleware.ts — not in Server
  * Components (use lib/supabase/server.ts there instead).
  *
- * Returns the validated user and the response object (with refreshed session
- * cookies already set on it). Always return this response instead of creating
- * a new NextResponse, otherwise the refreshed cookies will be lost.
+ * Returns the validated user, the response object (with refreshed session
+ * cookies already set on it), and the client itself so callers needing an
+ * additional read (e.g. the suspended-student check) can reuse it instead of
+ * constructing a second client from scratch. Always return `response`
+ * instead of creating a new NextResponse, otherwise the refreshed cookies
+ * will be lost.
  */
 export async function createMiddlewareClient(
   request: NextRequest
-): Promise<{ user: User | null; response: NextResponse }> {
+): Promise<{ user: User | null; response: NextResponse; supabase: SupabaseClient }> {
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -46,5 +49,5 @@ export async function createMiddlewareClient(
     data: { user },
   } = await supabase.auth.getUser();
 
-  return { user, response };
+  return { user, response, supabase };
 }

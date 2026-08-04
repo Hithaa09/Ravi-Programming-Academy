@@ -1,4 +1,4 @@
-import { runSql } from "./runner";
+import { runSqlIsolated } from "./run-isolated";
 import { compareSqlResults } from "./comparator";
 import type { SqlHiddenDataset } from "@/lib/types";
 
@@ -25,7 +25,7 @@ export interface HiddenRunResult {
   rowsReturned: number;
 }
 
-export function runHiddenDatasets(input: HiddenRunInput): HiddenRunResult {
+export async function runHiddenDatasets(input: HiddenRunInput): Promise<HiddenRunResult> {
   const { datasets, fallbackSchemaSql, query, ignoreRowOrder, ignoreColumnOrder } = input;
   const total = datasets.length;
   let passed = 0;
@@ -35,7 +35,7 @@ export function runHiddenDatasets(input: HiddenRunInput): HiddenRunResult {
   for (let i = 0; i < datasets.length; i++) {
     const dataset = datasets[i];
 
-    const run = runSql({
+    const run = await runSqlIsolated({
       // Per-dataset schema overrides the problem schema when provided.
       schemaSql: dataset.schemaSql?.trim() ? dataset.schemaSql : fallbackSchemaSql,
       sampleDataSql: dataset.dataSql,

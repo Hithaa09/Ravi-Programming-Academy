@@ -1,0 +1,31 @@
+export default function SqlLoading() {
+  return (
+    <div className="max-w-[1000px] mx-auto w-full pb-20 animate-pulse">
+      {/* Title */}
+      <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
+        <div className="flex items-baseline gap-4">
+          <div className="h-8 w-32 bg-surface-container-high rounded-lg" />
+          <div className="h-4 w-20 bg-surface-container-high rounded-lg" />
+        </div>
+      </div>
+
+      <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 shadow-card overflow-hidden">
+        {/* Filters */}
+        <div className="p-4 border-b border-outline-variant/10 bg-surface-bright flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
+          <div className="h-10 w-full md:w-64 bg-surface-container-high rounded-lg" />
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="h-10 w-48 bg-surface-container-high rounded-lg" />
+            <div className="h-10 w-28 bg-surface-container-high rounded-lg" />
+          </div>
+        </div>
+
+        {/* Rows */}
+        <div className="divide-y divide-outline-variant/10">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="h-12 mx-6 my-4 bg-surface-container-high rounded-lg" />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,11 +1,19 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
+import { createClient } from "@/lib/supabase/server";
 
 export interface BackfillResult {
   scanned: number;
   created: number;
   alreadyExisted: number;
+}
+
+async function requireAdmin(): Promise<void> {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const role = user?.app_metadata?.role;
+  if (!user || role !== "admin") throw new Error("Unauthorized");
 }
 
 /**
@@ -15,6 +23,7 @@ export interface BackfillResult {
  * they will receive a profile on their next login via the signUp/callback flow.
  */
 export async function backfillProfiles(): Promise<BackfillResult> {
+  await requireAdmin();
   // Collect every unique (studentId, studentEmail) pair from submissions.
   const raw = await prisma.sqlSubmission.findMany({
     select: { studentId: true, studentEmail: true },

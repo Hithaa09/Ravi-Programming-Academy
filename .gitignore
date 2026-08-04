@@ -43,3 +43,7 @@ next-env.d.ts
 *.swp
 *.swo
 *~
+
+# testsprite output — contains real account credentials in plaintext (test
+# scripts + logs), not source code, must never be committed.
+testsprite_tests/

@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import clsx from "clsx";
 import type { User } from "@supabase/supabase-js";
-import { STUDENT_NOTIFICATIONS, STUDENT_CART_ITEMS } from "@/lib/mock-data";
 import { createClient } from "@/lib/supabase/client";
 
 interface NavChild {
@@ -30,7 +29,11 @@ const NAV_ITEMS: NavItem[] = [
   { id: "sql", label: "SQL", icon: "database", href: "/sql" },
   { id: "leaderboard", label: "Leaderboard", icon: "emoji_events", href: "/leaderboard" },
   { id: "submissions", label: "Submissions", icon: "description", href: "/submissions" },
-  { id: "bookmarks", label: "Bookmarks", icon: "bookmark", href: "/bookmarks" },
+  // Always visible regardless of current purchase state — the destination
+  // page itself (app/buy-subscription/page.tsx) already shows "you already
+  // have lifetime access" instead of a checkout prompt when appropriate, so
+  // this doesn't need its own conditional fetch here.
+  { id: "subscription", label: "Subscription", icon: "shopping_cart", href: "/buy-subscription" },
   { id: "settings", label: "Settings", icon: "settings", href: "/settings" },
 ];
 
@@ -41,21 +44,18 @@ export function StudentLayout({ children }: { children: React.ReactNode }) {
 
   const [openGroup, setOpenGroup] = useState<string | null>(activeId && NAV_ITEMS.find((n) => n.id === activeId)?.children ? activeId : null);
   const [profileOpen, setProfileOpen] = useState(false);
-  const [notifOpen, setNotifOpen] = useState(false);
-  const [cartOpen, setCartOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [authUser, setAuthUser] = useState<User | null>(null);
-  const unreadCount = STUDENT_NOTIFICATIONS.filter((n) => n.unread).length;
 
   useEffect(() => {
     const supabase = createClient();
 
     async function checkSession() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.replace("/login"); return; }
-      setAuthUser(session.user);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { router.replace("/login"); return; }
+      setAuthUser(user);
     }
 
     checkSession();
@@ -201,96 +201,11 @@ export function StudentLayout({ children }: { children: React.ReactNode }) {
             </div>
           </div>
           <div className="flex items-center gap-1 sm:gap-2 shrink-0 ml-auto">
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => { setNotifOpen((v) => !v); setCartOpen(false); }}
-                className="w-9 h-9 shrink-0 flex items-center justify-center text-on-surface-variant hover:bg-surface-container-highest/50 rounded-full transition-colors relative"
-              >
-                <span className="material-symbols-outlined text-[22px]">notifications</span>
-                {unreadCount > 0 && <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-error rounded-full border-2 border-surface" />}
-              </button>
-              {notifOpen && (
-                <div
-                  className="absolute right-0 mt-2 w-80 max-w-[90vw] bg-surface-container-lowest border border-outline-variant/20 rounded-xl shadow-card overflow-hidden z-30"
-                  onMouseLeave={() => setNotifOpen(false)}
-                >
-                  <div className="px-4 py-3 border-b border-outline-variant/10 flex items-center justify-between">
-                    <p className="font-body-md text-body-md font-bold text-on-surface">Notifications</p>
-                    {unreadCount > 0 && <span className="font-label-sm text-label-sm text-secondary font-semibold">{unreadCount} new</span>}
-                  </div>
-                  <div className="max-h-80 overflow-y-auto custom-scrollbar">
-                    {STUDENT_NOTIFICATIONS.map((n, i) => (
-                      <div key={i} className={clsx("flex items-start gap-3 px-4 py-3 border-b border-outline-variant/10 last:border-0", n.unread && "bg-secondary/5")}>
-                        <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: n.iconBg }}>
-                          <span className="material-symbols-outlined text-[18px]" style={{ color: n.iconColor }}>{n.icon}</span>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-body-md text-body-md font-medium text-on-surface">{n.title}</p>
-                          <p className="font-label-sm text-label-sm text-on-surface-variant">{n.subtitle}</p>
-                          <p className="font-label-sm text-label-sm text-on-surface-variant/70 mt-0.5">{n.time}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => { setCartOpen((v) => !v); setNotifOpen(false); }}
-                className="w-9 h-9 shrink-0 flex items-center justify-center text-on-surface-variant hover:bg-surface-container-highest/50 rounded-full transition-colors relative"
-              >
-                <span className="material-symbols-outlined text-[22px]">shopping_cart</span>
-                {STUDENT_CART_ITEMS.length > 0 && (
-                  <span className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-secondary text-white text-[10px] font-bold flex items-center justify-center">
-                    {STUDENT_CART_ITEMS.length}
-                  </span>
-                )}
-              </button>
-              {cartOpen && (
-                <div
-                  className="absolute right-0 mt-2 w-80 max-w-[90vw] bg-surface-container-lowest border border-outline-variant/20 rounded-xl shadow-card overflow-hidden z-30"
-                  onMouseLeave={() => setCartOpen(false)}
-                >
-                  <div className="px-4 py-3 border-b border-outline-variant/10">
-                    <p className="font-body-md text-body-md font-bold text-on-surface">Cart</p>
-                  </div>
-                  {STUDENT_CART_ITEMS.length === 0 ? (
-                    <p className="px-4 py-6 text-center font-label-md text-label-md text-on-surface-variant">Your cart is empty.</p>
-                  ) : (
-                    <>
-                      <div className="max-h-72 overflow-y-auto custom-scrollbar">
-                        {STUDENT_CART_ITEMS.map((item) => (
-                          <div key={item.id} className="flex items-start justify-between gap-3 px-4 py-3 border-b border-outline-variant/10 last:border-0">
-                            <div className="flex-1 min-w-0">
-                              <p className="font-body-md text-body-md font-medium text-on-surface">{item.name}</p>
-                              <p className="font-label-sm text-label-sm text-on-surface-variant">{item.description}</p>
-                            </div>
-                            <span className="font-label-md text-label-md font-bold text-secondary shrink-0">{item.price}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="px-4 py-3">
-                        <button
-                          type="button"
-                          className="w-full bg-primary-container text-white py-2 rounded-lg font-label-md text-label-md font-bold hover:bg-primary-container/90 transition-colors"
-                        >
-                          Checkout
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
             <div className="h-8 w-px bg-outline-variant/30 mx-1 sm:mx-2 shrink-0" />
             <div className="relative">
               <button
                 type="button"
-                onClick={() => { setProfileOpen((v) => !v); setNotifOpen(false); setCartOpen(false); }}
+                onClick={() => setProfileOpen((v) => !v)}
                 className="flex items-center gap-2 hover:bg-surface-container-highest/30 py-1 px-2 rounded-full transition-colors"
               >
                 <div className="w-8 h-8 rounded-full bg-surface-container-highest flex items-center justify-center text-on-surface font-bold font-label-md">

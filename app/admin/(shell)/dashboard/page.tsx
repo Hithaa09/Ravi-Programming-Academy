@@ -20,10 +20,11 @@ export default async function AdminDashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard value={stats.sqlActiveStudents} label="SQL Active Students" icon="group" />
+        <StatCard value={stats.totalStudents} label="Total Students" icon="group" />
         <StatCard value={stats.totalProgrammingProblems} label="Programming Problems" icon="code" />
         <StatCard value={stats.totalSqlProblems} label="SQL Problems" icon="database" />
         <StatCard value={stats.totalSqlSubmissions.toLocaleString()} label="SQL Submissions" icon="description" />
+        <StatCard value={stats.totalProgrammingSubmissions.toLocaleString()} label="Programming Submissions" icon="description" />
       </div>
 
       <DashboardInteractiveSection recentActivity={recentActivity} studentInsights={studentInsights} submissionsOverview={submissionsOverview} />
@@ -32,36 +33,36 @@ export default async function AdminDashboardPage() {
         <Card className="p-card-padding">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-headline-md text-headline-md text-on-surface">Top Performing Students</h2>
-            <select className="border border-outline-variant/40 rounded-lg text-sm py-1.5 px-3 bg-white focus:outline-none focus:ring-1 focus:ring-secondary">
-              <option>This Month</option>
-            </select>
+            <span className="font-label-md text-label-md text-on-surface-variant">All Time</span>
           </div>
-          <table className="w-full text-left border-collapse">
-            <thead className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">
-              <tr>
-                <th className="py-2">Rank</th>
-                <th className="py-2">Student Name</th>
-                <th className="py-2">Problems Solved</th>
-                <th className="py-2">Accuracy</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-outline-variant/10 text-sm">
-              {topStudents.length === 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">
                 <tr>
-                  <td colSpan={4} className="py-6 text-center font-body-md text-body-md text-on-surface-variant">
-                    No SQL submissions yet.
-                  </td>
+                  <th className="py-2">Rank</th>
+                  <th className="py-2">Student Name</th>
+                  <th className="py-2">Problems Solved</th>
+                  <th className="py-2">Accuracy</th>
                 </tr>
-              ) : topStudents.map((s, i) => (
-                <tr key={s.email}>
-                  <td className="py-3 font-medium text-on-surface">{i + 1}</td>
-                  <td className="py-3 text-on-surface">{s.email}</td>
-                  <td className="py-3 text-on-surface-variant">{s.problemsSolved}</td>
-                  <td className="py-3 text-on-surface-variant">{s.accuracy}%</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-outline-variant/10 text-sm">
+                {topStudents.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="py-6 text-center font-body-md text-body-md text-on-surface-variant">
+                      No submissions yet.
+                    </td>
+                  </tr>
+                ) : topStudents.map((s, i) => (
+                  <tr key={s.email}>
+                    <td className="py-3 font-medium text-on-surface">{i + 1}</td>
+                    <td className="py-3 text-on-surface max-w-[220px] truncate">{s.email}</td>
+                    <td className="py-3 text-on-surface-variant">{s.problemsSolved}</td>
+                    <td className="py-3 text-on-surface-variant">{s.accuracy}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <Link href="/admin/students" className="inline-flex items-center gap-1 font-label-md text-label-md text-secondary mt-4">
             View All Students
           </Link>

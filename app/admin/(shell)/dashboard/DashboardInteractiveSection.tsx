@@ -57,10 +57,10 @@ export function DashboardInteractiveSection({ recentActivity, studentInsights, s
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[
-            { label: "SQL Active Students", value: insights.activeStudents, delta: insights.activeStudentsDelta },
-            { label: "Avg SQL / Student", value: insights.avgSubmissionsPerStudent, delta: insights.avgSubmissionsPerStudentDelta },
-            { label: "SQL Accepted", value: insights.acceptedSubmissions.toLocaleString(), delta: insights.acceptedSubmissionsDelta },
-            { label: "SQL Accuracy", value: `${insights.avgAccuracy}%`, delta: insights.avgAccuracyDelta },
+            { label: "Active Students", value: insights.activeStudents, delta: insights.activeStudentsDelta },
+            { label: "Avg Submissions / Student", value: insights.avgSubmissionsPerStudent, delta: insights.avgSubmissionsPerStudentDelta },
+            { label: "Accepted Submissions", value: insights.acceptedSubmissions.toLocaleString(), delta: insights.acceptedSubmissionsDelta },
+            { label: "Accuracy", value: `${insights.avgAccuracy}%`, delta: insights.avgAccuracyDelta },
           ].map((b) => (
             <div key={b.label} className="bg-surface-container-low/60 rounded-xl p-4">
               <p className="font-body-md text-body-md text-on-surface-variant mb-1">{b.label}</p>

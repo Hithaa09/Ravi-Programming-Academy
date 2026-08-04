@@ -4,8 +4,20 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Editor } from "@monaco-editor/react";
-import type { TestCase, Difficulty, QuestionStatus, QuestionAvailability } from "@/lib/types";
+import type { TestCase, Difficulty, QuestionStatus, QuestionAvailability, AccessType } from "@/lib/types";
 import { CODE_LANGUAGES, type CodeLanguage } from "@/lib/languages";
+import { DEFAULT_TIME_LIMIT_MS, DEFAULT_MEMORY_LIMIT_KB, MIN_TIME_LIMIT_MS, MAX_TIME_LIMIT_MS, MIN_MEMORY_LIMIT_KB, MAX_MEMORY_LIMIT_KB } from "@/lib/execution-limits";
+import {
+  PARAM_TYPES,
+  FUNCTION_ONLY_LANGUAGES,
+  getWrapperAdapter,
+  coerceInputValue,
+  formatValueForInput,
+  type ParamType,
+  type FunctionParam,
+  type FunctionSignature,
+  type FunctionTestCase,
+} from "@/lib/wrappers";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import {
@@ -13,6 +25,7 @@ import {
   updateProblem,
   deleteProblem,
   type ProgrammingProblemRecord,
+  type ExecutionStyle,
 } from "@/lib/actions/programming-problems";
 import { parseProblemFile, type ZipParseResult } from "@/lib/actions/parse-problem-file";
 import {
@@ -23,6 +36,9 @@ import {
 const DIFFICULTIES: Difficulty[] = ["Easy", "Medium", "Hard"];
 const QUESTION_STATUSES: QuestionStatus[] = ["Draft", "Published", "Archived"];
 const QUESTION_AVAILABILITIES: QuestionAvailability[] = ["Locked", "Available"];
+const ACCESS_TYPES: AccessType[] = ["FREE", "PREMIUM"];
+const EXECUTION_STYLES: ExecutionStyle[] = ["FULL_PROGRAM", "FUNCTION_ONLY"];
+const FUNCTION_ONLY_CODE_LANGUAGES = CODE_LANGUAGES.filter((l) => FUNCTION_ONLY_LANGUAGES.includes(l.id));
 
 type EntryMethod = "manual" | "import";
 
@@ -129,16 +145,18 @@ function CodeLanguageEditor({
   value,
   onChange,
   placeholder,
+  languages = CODE_LANGUAGES,
 }: {
   title: string;
   description: string;
   value: Record<string, string>;
   onChange: (next: Record<string, string>) => void;
   placeholder: (lang: CodeLanguage) => string;
+  languages?: CodeLanguage[];
 }) {
-  const [active, setActive] = useState(CODE_LANGUAGES[0].id);
-  const activeLang = CODE_LANGUAGES.find((l) => l.id === active)!;
-  const activeValue = value[active] ?? "";
+  const [active, setActive] = useState(languages[0].id);
+  const activeLang = languages.find((l) => l.id === active) ?? languages[0];
+  const activeValue = value[activeLang.id] ?? "";
 
   return (
     <div>
@@ -147,7 +165,7 @@ function CodeLanguageEditor({
 
       <div className="relative">
         <div className="flex items-center overflow-x-auto border-b border-outline-variant/20 [scrollbar-width:none]">
-          {CODE_LANGUAGES.map((lang) => {
+          {languages.map((lang) => {
             const filled = Boolean(value[lang.id]?.trim());
             const isActive = lang.id === active;
             return (
@@ -194,6 +212,361 @@ function CodeLanguageEditor({
   );
 }
 
+// ─── Function Only mode ──────────────────────────────────────────────────────
+// Function Only problems replace the raw-stdin/stdout authoring UI above
+// (TestCaseEditor, and Starter Code's CodeLanguageEditor) with a structured
+// signature builder, typed test cases, and a read-only generated-stub
+// preview. Official Solutions keeps using CodeLanguageEditor as-is (still
+// just "one code blob per language"), restricted to the 4 Function-Only
+// languages via the `languages` prop added above.
+
+function FunctionSignatureBuilder({
+  functionName,
+  onFunctionNameChange,
+  params,
+  onParamsChange,
+  onRemoveParam,
+  returnType,
+  onReturnTypeChange,
+}: {
+  functionName: string;
+  onFunctionNameChange: (v: string) => void;
+  params: FunctionParam[];
+  onParamsChange: (next: FunctionParam[]) => void;
+  // Separate from onParamsChange: removing a param shifts every later
+  // param's index, which would silently misalign any test case data already
+  // authored against the old positions (test cases store args positionally,
+  // with no name tag per value) unless the caller also re-splices its stored
+  // test cases at the same index. onParamsChange alone can't signal that.
+  onRemoveParam: (idx: number) => void;
+  returnType: ParamType;
+  onReturnTypeChange: (v: ParamType) => void;
+}) {
+  function updateParam(idx: number, field: "name" | "type", value: string) {
+    onParamsChange(params.map((p, i) => (i === idx ? { ...p, [field]: value } : p)));
+  }
+
+  return (
+    <div>
+      <h3 className="font-headline-md text-body-lg font-semibold text-on-surface mb-1">Function Signature</h3>
+      <p className="font-body-md text-body-md text-on-surface-variant mb-4">
+        Defines the function students implement. The backend generates the hidden driver code from this for every supported language.
+      </p>
+      <div className="mb-4">
+        <label className="font-label-sm text-label-sm text-on-surface-variant block mb-1">Function Name</label>
+        <input
+          value={functionName}
+          onChange={(e) => onFunctionNameChange(e.target.value)}
+          placeholder="e.g. twoSum"
+          className={textareaClass()}
+        />
+      </div>
+      <div className="space-y-3 mb-4">
+        <label className="font-label-sm text-label-sm text-on-surface-variant block">Parameters</label>
+        {params.length === 0 && (
+          <div className="flex items-center justify-center py-6 border border-dashed border-outline-variant/40 rounded-xl text-on-surface-variant font-body-md text-body-md">
+            No parameters yet.
+          </div>
+        )}
+        {params.map((p, idx) => (
+          <div key={idx} className="flex items-center gap-3">
+            <input
+              value={p.name}
+              onChange={(e) => updateParam(idx, "name", e.target.value)}
+              placeholder="param name"
+              className={textareaClass("flex-1")}
+            />
+            <select
+              value={p.type}
+              onChange={(e) => updateParam(idx, "type", e.target.value)}
+              className={textareaClass("w-40 shrink-0")}
+            >
+              {PARAM_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <button
+              type="button"
+              onClick={() => onRemoveParam(idx)}
+              className="text-on-surface-variant hover:text-error transition-colors shrink-0"
+              aria-label={`Remove parameter ${idx + 1}`}
+            >
+              <span className="material-symbols-outlined text-[18px]">delete</span>
+            </button>
+          </div>
+        ))}
+        <Button type="button" variant="secondary" onClick={() => onParamsChange([...params, { name: "", type: "int" }])}>
+          <span className="material-symbols-outlined text-[18px]">add</span> Add Parameter
+        </Button>
+      </div>
+      <div>
+        <label className="font-label-sm text-label-sm text-on-surface-variant block mb-1">Return Type</label>
+        <select
+          value={returnType}
+          onChange={(e) => onReturnTypeChange(e.target.value as ParamType)}
+          className={textareaClass("w-40")}
+        >
+          {PARAM_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+interface FunctionTestCaseInput {
+  argInputs: string[];
+  expectedInput: string;
+}
+
+function emptyFunctionCase(paramCount: number): FunctionTestCaseInput {
+  return { argInputs: new Array(paramCount).fill(""), expectedInput: "" };
+}
+
+// Keeps already-authored test cases aligned with the signature after a
+// parameter is deleted — test cases store args positionally (no per-value
+// name tag), so removing param index N must also drop argInputs[N] from
+// every existing case, or every value after it would silently shift left
+// and end up labeled against the wrong parameter.
+function removeParamIndexFromCases(cases: FunctionTestCaseInput[], removedIdx: number): FunctionTestCaseInput[] {
+  return cases.map((c) => ({ ...c, argInputs: c.argInputs.filter((_, i) => i !== removedIdx) }));
+}
+
+// Converts a stored FunctionTestCase (real JSON args/expected) back into the
+// raw-text form this editor works with, for loading an existing problem.
+function toFunctionTestCaseInput(tc: FunctionTestCase, params: FunctionParam[], returnType: ParamType): FunctionTestCaseInput {
+  return {
+    argInputs: params.map((p, i) => formatValueForInput(tc.args[i], p.type)),
+    expectedInput: formatValueForInput(tc.expected, returnType),
+  };
+}
+
+// Coerces every case's raw text into real JSON values via coerceInputValue,
+// stopping at (and reporting) the first coercion error rather than silently
+// saving a garbage value.
+function buildFunctionTestCases(
+  cases: FunctionTestCaseInput[],
+  params: FunctionParam[],
+  returnType: ParamType
+): { result: FunctionTestCase[] | null; error?: string } {
+  const result: FunctionTestCase[] = [];
+  for (let c = 0; c < cases.length; c++) {
+    const args: unknown[] = [];
+    for (let i = 0; i < params.length; i++) {
+      const { value, error } = coerceInputValue(cases[c].argInputs[i] ?? "", params[i].type);
+      if (error) return { result: null, error: `Case ${c + 1}, parameter "${params[i].name || i + 1}": ${error}` };
+      args.push(value);
+    }
+    const { value: expected, error: expectedError } = coerceInputValue(cases[c].expectedInput, returnType);
+    if (expectedError) return { result: null, error: `Case ${c + 1}, expected output: ${expectedError}` };
+    result.push({ args, expected });
+  }
+  return { result };
+}
+
+function FunctionTestCaseEditor({
+  title,
+  description,
+  locked,
+  params,
+  returnType,
+  cases,
+  onChange,
+  addLabel,
+}: {
+  title: string;
+  description: string;
+  locked?: boolean;
+  params: FunctionParam[];
+  returnType: ParamType;
+  cases: FunctionTestCaseInput[];
+  onChange: (next: FunctionTestCaseInput[]) => void;
+  addLabel: string;
+}) {
+  function updateArg(caseIdx: number, paramIdx: number, value: string) {
+    onChange(
+      cases.map((c, i) => {
+        if (i !== caseIdx) return c;
+        const argInputs = [...c.argInputs];
+        while (argInputs.length <= paramIdx) argInputs.push("");
+        argInputs[paramIdx] = value;
+        return { ...c, argInputs };
+      })
+    );
+  }
+  function updateExpected(caseIdx: number, value: string) {
+    onChange(cases.map((c, i) => (i === caseIdx ? { ...c, expectedInput: value } : c)));
+  }
+  function remove(caseIdx: number) {
+    onChange(cases.filter((_, i) => i !== caseIdx));
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-1">
+        <h3 className="font-headline-md text-body-lg font-semibold text-on-surface">{title}</h3>
+        {locked && <span className="material-symbols-outlined text-on-surface-variant text-[18px]">lock</span>}
+        <span className="font-label-sm text-label-sm text-on-surface-variant bg-surface-container-low rounded-full px-2 py-0.5">
+          {cases.length}
+        </span>
+      </div>
+      <p className="font-body-md text-body-md text-on-surface-variant mb-4">{description}</p>
+      {params.length === 0 ? (
+        <p className="font-body-md text-body-md text-on-surface-variant">
+          Define at least one parameter in the Function Signature above before adding test cases.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          {cases.length === 0 ? (
+            <div className="flex items-center justify-center py-8 border border-dashed border-outline-variant/40 rounded-xl text-on-surface-variant font-body-md text-body-md">
+              No test cases yet. Click &ldquo;{addLabel}&rdquo; to add one.
+            </div>
+          ) : (
+            cases.map((c, caseIdx) => (
+              <div key={caseIdx} className="bg-surface-container-low rounded-xl border border-outline-variant/20 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="font-label-md text-label-md font-bold text-on-surface">Case {caseIdx + 1}</span>
+                  <button
+                    type="button"
+                    onClick={() => remove(caseIdx)}
+                    className="text-on-surface-variant hover:text-error transition-colors"
+                    aria-label={`Remove case ${caseIdx + 1}`}
+                  >
+                    <span className="material-symbols-outlined text-[18px]">delete</span>
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {params.map((p, paramIdx) => (
+                    <div key={paramIdx}>
+                      <label className="font-label-sm text-label-sm text-on-surface-variant block mb-1">
+                        {p.name || `param${paramIdx + 1}`} <span className="text-on-surface-variant/60">({p.type})</span>
+                      </label>
+                      <input
+                        value={c.argInputs[paramIdx] ?? ""}
+                        onChange={(e) => updateArg(caseIdx, paramIdx, e.target.value)}
+                        placeholder={p.type.endsWith("[]") ? "comma-separated, e.g. 1, 2, 3" : p.type}
+                        className={textareaClass("text-sm")}
+                      />
+                    </div>
+                  ))}
+                  <div>
+                    <label className="font-label-sm text-label-sm text-on-surface-variant block mb-1">
+                      Expected Output <span className="text-on-surface-variant/60">({returnType})</span>
+                    </label>
+                    <input
+                      value={c.expectedInput}
+                      onChange={(e) => updateExpected(caseIdx, e.target.value)}
+                      placeholder={returnType.endsWith("[]") ? "comma-separated, e.g. 1, 2, 3" : returnType}
+                      className={textareaClass("text-sm")}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+          <Button type="button" variant="secondary" onClick={() => onChange([...cases, emptyFunctionCase(params.length)])}>
+            <span className="material-symbols-outlined text-[18px]">add</span> {addLabel}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FunctionStubPreview({ signature }: { signature: FunctionSignature }) {
+  const [active, setActive] = useState(FUNCTION_ONLY_CODE_LANGUAGES[0].id);
+  const activeLang = FUNCTION_ONLY_CODE_LANGUAGES.find((l) => l.id === active) ?? FUNCTION_ONLY_CODE_LANGUAGES[0];
+  const adapter = getWrapperAdapter(active);
+  const ready = Boolean(signature.functionName.trim()) && signature.params.every((p) => p.name.trim());
+  const stub = adapter && ready
+    ? adapter.renderFunctionStub(signature)
+    : "// Fill in the function name and every parameter name above to preview the generated starter code.";
+
+  return (
+    <div>
+      <h3 className="font-headline-md text-body-lg font-semibold text-on-surface mb-1">Starter Code Preview</h3>
+      <p className="font-body-md text-body-md text-on-surface-variant mb-4">
+        Auto-generated from the function signature above, per language — this is exactly what students see. Not editable here.
+      </p>
+      <div className="flex items-center overflow-x-auto border-b border-outline-variant/20 [scrollbar-width:none]">
+        {FUNCTION_ONLY_CODE_LANGUAGES.map((lang) => {
+          const isActive = lang.id === active;
+          return (
+            <button
+              key={lang.id}
+              type="button"
+              onClick={() => setActive(lang.id)}
+              className={`flex items-center gap-1 px-3 py-2 -mb-px border-b-2 font-label-md text-label-md whitespace-nowrap transition-colors shrink-0 ${
+                isActive ? "border-secondary text-secondary" : "border-transparent text-on-surface-variant hover:text-on-surface"
+              }`}
+            >
+              {lang.label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-3 rounded-lg border border-outline-variant/30 overflow-hidden">
+        <Editor
+          height="220px"
+          theme="vs-dark"
+          language={activeLang.monacoId}
+          value={stub}
+          options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13, fontFamily: "Menlo, Consolas, 'Courier New', monospace", scrollBeyondLastLine: false }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// Debug-only view of the exact source Judge0 receives — the student's (or,
+// here, the Official Solution's) function body spliced into the generated
+// driver. Never shown to students; exists purely so an admin can see why a
+// problem's grading is misbehaving without needing to reproduce it in a
+// script. Falls back to the plain stub (no student code yet) if no official
+// solution has been written for the active language.
+function DriverPreview({ signature, officialSolutions }: { signature: FunctionSignature; officialSolutions: Record<string, string> }) {
+  const [active, setActive] = useState(FUNCTION_ONLY_CODE_LANGUAGES[0].id);
+  const activeLang = FUNCTION_ONLY_CODE_LANGUAGES.find((l) => l.id === active) ?? FUNCTION_ONLY_CODE_LANGUAGES[0];
+  const adapter = getWrapperAdapter(active);
+  const ready = Boolean(signature.functionName.trim()) && signature.params.every((p) => p.name.trim());
+  const driver = adapter && ready
+    ? adapter.renderDriver(signature, officialSolutions[active]?.trim() || adapter.renderFunctionStub(signature))
+    : "// Fill in the function name and every parameter name above to preview the generated driver.";
+
+  return (
+    <div>
+      <h3 className="font-headline-md text-body-lg font-semibold text-on-surface mb-1">Generated Driver Preview (Debug)</h3>
+      <p className="font-body-md text-body-md text-on-surface-variant mb-4">
+        The exact source sent to Judge0 — the function body above spliced into the auto-generated driver. Uses the Official
+        Solution below for the active language if one is filled in, otherwise the plain stub. For debugging only — never shown to students.
+      </p>
+      <div className="flex items-center overflow-x-auto border-b border-outline-variant/20 [scrollbar-width:none]">
+        {FUNCTION_ONLY_CODE_LANGUAGES.map((lang) => {
+          const isActive = lang.id === active;
+          return (
+            <button
+              key={lang.id}
+              type="button"
+              onClick={() => setActive(lang.id)}
+              className={`flex items-center gap-1 px-3 py-2 -mb-px border-b-2 font-label-md text-label-md whitespace-nowrap transition-colors shrink-0 ${
+                isActive ? "border-secondary text-secondary" : "border-transparent text-on-surface-variant hover:text-on-surface"
+              }`}
+            >
+              {lang.label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-3 rounded-lg border border-outline-variant/30 overflow-hidden">
+        <Editor
+          height="320px"
+          theme="vs-dark"
+          language={activeLang.monacoId}
+          value={driver}
+          options={{ readOnly: true, minimap: { enabled: false }, fontSize: 12, fontFamily: "Menlo, Consolas, 'Courier New', monospace", scrollBeyondLastLine: false }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function ConfBadge() {
   return (
     <span className="inline-flex items-center gap-0.5 font-label-xs text-[10px] font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5">
@@ -210,6 +583,7 @@ interface BulkEntry {
   difficulty: Difficulty;
   status: QuestionStatus;
   availability: QuestionAvailability;
+  accessType: AccessType;
   topic: string;
   statement: string;
   inputFormat: string;
@@ -222,6 +596,15 @@ interface BulkEntry {
   hiddenCases: TestCase[];
   starterCodeByLang: Record<string, string>;
   officialSolutions: Record<string, string>;
+  // Populated only when the source document contained a recognizable
+  // Function Signature section (see extractProblemFields) — otherwise
+  // executionStyle stays FULL_PROGRAM and these are left at their defaults.
+  executionStyle: ExecutionStyle;
+  functionName: string;
+  functionParams: FunctionParam[];
+  functionReturnType: ParamType;
+  functionVisibleCases: FunctionTestCaseInput[];
+  functionHiddenCases: FunctionTestCaseInput[];
   lowConfidenceCount: number;
 }
 
@@ -239,6 +622,7 @@ function makeErrorEntry(filename: string, parseError: string): BulkEntry {
     difficulty: "Easy",
     status: "Draft",
     availability: "Locked",
+    accessType: "FREE",
     topic: "",
     statement: "",
     inputFormat: "",
@@ -251,6 +635,12 @@ function makeErrorEntry(filename: string, parseError: string): BulkEntry {
     hiddenCases: [emptyCase()],
     starterCodeByLang: {},
     officialSolutions: {},
+    executionStyle: "FULL_PROGRAM",
+    functionName: "",
+    functionParams: [],
+    functionReturnType: "int",
+    functionVisibleCases: [],
+    functionHiddenCases: [],
     lowConfidenceCount: 0,
   };
 }
@@ -276,6 +666,12 @@ function BulkEntryEditModal({
   const [explanation, setExplanation] = useState(entry.explanation);
   const [visibleCases, setVisibleCases] = useState<TestCase[]>(entry.visibleCases);
   const [hiddenCases, setHiddenCases] = useState<TestCase[]>(entry.hiddenCases);
+  const [executionStyle, setExecutionStyle] = useState<ExecutionStyle>(entry.executionStyle);
+  const [functionName, setFunctionName] = useState(entry.functionName);
+  const [functionParams, setFunctionParams] = useState<FunctionParam[]>(entry.functionParams);
+  const [functionReturnType, setFunctionReturnType] = useState<ParamType>(entry.functionReturnType);
+  const [functionVisibleCases, setFunctionVisibleCases] = useState<FunctionTestCaseInput[]>(entry.functionVisibleCases);
+  const [functionHiddenCases, setFunctionHiddenCases] = useState<FunctionTestCaseInput[]>(entry.functionHiddenCases);
 
   return (
     <Modal title={`Edit: ${entry.filename.split("/").pop()}`} onClose={onClose} maxWidth="max-w-2xl">
@@ -295,6 +691,14 @@ function BulkEntryEditModal({
             <label className="font-label-md text-label-md font-bold text-on-surface block mb-1">Topic</label>
             <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. Array, Hash Table" className={textareaClass()} />
           </div>
+        </div>
+        <div>
+          <label className="font-label-md text-label-md font-bold text-on-surface block mb-1">Execution Style</label>
+          <select value={executionStyle} onChange={(e) => setExecutionStyle(e.target.value as ExecutionStyle)} className={textareaClass()}>
+            {EXECUTION_STYLES.map((s) => (
+              <option key={s} value={s}>{s === "FULL_PROGRAM" ? "Full Program" : "Function Only"}</option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="font-label-md text-label-md font-bold text-on-surface block mb-1">Problem Statement</label>
@@ -328,34 +732,84 @@ function BulkEntryEditModal({
           <label className="font-label-md text-label-md font-bold text-on-surface block mb-1">Explanation</label>
           <textarea value={explanation} onChange={(e) => setExplanation(e.target.value)} rows={2} className={textareaClass()} />
         </div>
+        {executionStyle === "FUNCTION_ONLY" && (
+          <div className="pt-2 border-t border-outline-variant/20 space-y-6">
+            <FunctionSignatureBuilder
+              functionName={functionName}
+              onFunctionNameChange={setFunctionName}
+              params={functionParams}
+              onParamsChange={setFunctionParams}
+              onRemoveParam={(idx) => {
+                setFunctionParams((prev) => prev.filter((_, i) => i !== idx));
+                setFunctionVisibleCases((prev) => removeParamIndexFromCases(prev, idx));
+                setFunctionHiddenCases((prev) => removeParamIndexFromCases(prev, idx));
+              }}
+              returnType={functionReturnType}
+              onReturnTypeChange={setFunctionReturnType}
+            />
+            <FunctionStubPreview signature={{ functionName, params: functionParams, returnType: functionReturnType }} />
+          </div>
+        )}
         <div className="pt-2 border-t border-outline-variant/20">
-          <TestCaseEditor
-            title="Visible Test Cases"
-            description="Shown to students on the problem page."
-            cases={visibleCases}
-            onChange={setVisibleCases}
-            addLabel="Add Test Case"
-          />
+          {executionStyle === "FUNCTION_ONLY" ? (
+            <FunctionTestCaseEditor
+              title="Visible Test Cases"
+              description="Shown to students on the problem page."
+              params={functionParams}
+              returnType={functionReturnType}
+              cases={functionVisibleCases}
+              onChange={setFunctionVisibleCases}
+              addLabel="Add Test Case"
+            />
+          ) : (
+            <TestCaseEditor
+              title="Visible Test Cases"
+              description="Shown to students on the problem page."
+              cases={visibleCases}
+              onChange={setVisibleCases}
+              addLabel="Add Test Case"
+            />
+          )}
         </div>
         <div className="pt-2 border-t border-outline-variant/20">
-          <TestCaseEditor
-            title="Hidden Test Cases"
-            description="Used only during grading — never shown to students."
-            locked
-            cases={hiddenCases}
-            onChange={setHiddenCases}
-            addLabel="Add Hidden Test Case"
-          />
+          {executionStyle === "FUNCTION_ONLY" ? (
+            <FunctionTestCaseEditor
+              title="Hidden Test Cases"
+              description="Used only during grading — never shown to students."
+              locked
+              params={functionParams}
+              returnType={functionReturnType}
+              cases={functionHiddenCases}
+              onChange={setFunctionHiddenCases}
+              addLabel="Add Hidden Test Case"
+            />
+          ) : (
+            <TestCaseEditor
+              title="Hidden Test Cases"
+              description="Used only during grading — never shown to students."
+              locked
+              cases={hiddenCases}
+              onChange={setHiddenCases}
+              addLabel="Add Hidden Test Case"
+            />
+          )}
         </div>
         <p className="font-label-sm text-label-sm text-on-surface-variant">
-          Starter code and solutions can be added after import via the Edit Problem page.
+          {executionStyle === "FUNCTION_ONLY"
+            ? "Official solutions can be added after import via the Edit Problem page."
+            : "Starter code and solutions can be added after import via the Edit Problem page."}
         </p>
         <div className="flex justify-end gap-3 pt-2 border-t border-outline-variant/20">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
           <Button
             type="button"
             onClick={() =>
-              onSave({ ...entry, title, difficulty, topic, statement, inputFormat, outputFormat, constraints, sampleInput, sampleOutput, explanation, visibleCases, hiddenCases })
+              onSave({
+                ...entry,
+                title, difficulty, topic, statement, inputFormat, outputFormat, constraints, sampleInput, sampleOutput, explanation,
+                visibleCases, hiddenCases,
+                executionStyle, functionName, functionParams, functionReturnType, functionVisibleCases, functionHiddenCases,
+              })
             }
           >
             Save Changes
@@ -387,6 +841,21 @@ export function ProgrammingProblemForm({ mode, backHref, cancelHref, initial }: 
   const [difficulty, setDifficulty] = useState<Difficulty>(initial?.difficulty ?? "Easy");
   const [status, setStatus] = useState<QuestionStatus>(initial?.status ?? "Draft");
   const [availability, setAvailability] = useState<QuestionAvailability>(initial?.availability ?? "Locked");
+  const [accessType, setAccessType] = useState<AccessType>(initial?.accessType ?? "FREE");
+  const [executionStyle, setExecutionStyle] = useState<ExecutionStyle>(initial?.executionStyle ?? "FULL_PROGRAM");
+  const [functionName, setFunctionName] = useState(initial?.functionSignature?.functionName ?? "");
+  const [functionParams, setFunctionParams] = useState<FunctionParam[]>(initial?.functionSignature?.params ?? []);
+  const [functionReturnType, setFunctionReturnType] = useState<ParamType>(initial?.functionSignature?.returnType ?? "int");
+  const [functionVisibleCases, setFunctionVisibleCases] = useState<FunctionTestCaseInput[]>(
+    (initial?.functionTestCases ?? []).map((tc) =>
+      toFunctionTestCaseInput(tc, initial?.functionSignature?.params ?? [], initial?.functionSignature?.returnType ?? "int")
+    )
+  );
+  const [functionHiddenCases, setFunctionHiddenCases] = useState<FunctionTestCaseInput[]>(
+    (initial?.functionHiddenTestCases ?? []).map((tc) =>
+      toFunctionTestCaseInput(tc, initial?.functionSignature?.params ?? [], initial?.functionSignature?.returnType ?? "int")
+    )
+  );
   const [topic, setTopic] = useState(initial?.topics?.join(", ") ?? "");
   const [statement, setStatement] = useState(initial?.description ?? "");
   const [inputFormat, setInputFormat] = useState(initial?.inputFormat ?? "");
@@ -395,6 +864,8 @@ export function ProgrammingProblemForm({ mode, backHref, cancelHref, initial }: 
   const [sampleInput, setSampleInput] = useState(initial?.sampleInput ?? "");
   const [sampleOutput, setSampleOutput] = useState(initial?.sampleOutput ?? "");
   const [explanation, setExplanation] = useState(initial?.explanation ?? "");
+  const [timeLimitMs, setTimeLimitMs] = useState(initial?.timeLimitMs?.toString() ?? "");
+  const [memoryLimitKb, setMemoryLimitKb] = useState(initial?.memoryLimitKb?.toString() ?? "");
 
   const [visibleCases, setVisibleCases] = useState<TestCase[]>(
     initial?.testCases?.length ? initial.testCases : [emptyCase()]
@@ -402,6 +873,11 @@ export function ProgrammingProblemForm({ mode, backHref, cancelHref, initial }: 
   const [hiddenCases, setHiddenCases] = useState<TestCase[]>(
     initial?.hiddenTestCases?.length ? initial.hiddenTestCases : [emptyCase()]
   );
+  // Mirrors the server-side check in validateProblemInput (programming-problems.ts):
+  // a blank pre-seeded row doesn't count — only test cases with a real expected
+  // output do, so this can't be satisfied by leaving the default empty row untouched.
+  const hasMeaningfulHiddenCase =
+    executionStyle === "FUNCTION_ONLY" ? functionHiddenCases.length > 0 : hiddenCases.some((tc) => tc.expected?.trim());
 
   const [starterCodeByLang, setStarterCodeByLang] = useState<Record<string, string>>(
     initial?.starterCodeByLanguage ?? {}
@@ -532,6 +1008,7 @@ export function ProgrammingProblemForm({ mode, backHref, cancelHref, initial }: 
       if (result.hiddenTestCases?.confidence === "low") low.add("hiddenTestCases");
       if (result.starterCode?.confidence === "low") low.add("starterCode");
       if (result.solutions?.confidence === "low") low.add("solutions");
+      if (result.functionSignature?.confidence === "low") low.add("functionSignature");
       setLowConfFields(low);
 
       if (result.title?.value) setTitle(result.title.value);
@@ -551,6 +1028,26 @@ export function ProgrammingProblemForm({ mode, backHref, cancelHref, initial }: 
       if (result.solutions?.value && Object.keys(result.solutions.value).length)
         setOfficialSolutions(result.solutions.value);
 
+      // A recognized "Function Signature" section switches the whole form
+      // into Function Only mode — the document's test cases were already
+      // parsed as structured args/expected (see extractProblemFields), not
+      // raw stdin/stdout, so they get converted to this editor's raw-text
+      // representation via the same helper used when loading an existing
+      // Function Only problem for editing.
+      if (result.functionSignature?.value) {
+        const sig = result.functionSignature.value;
+        setExecutionStyle("FUNCTION_ONLY");
+        setFunctionName(sig.functionName);
+        setFunctionParams(sig.params);
+        setFunctionReturnType(sig.returnType);
+        if (result.functionTestCases?.value.length) {
+          setFunctionVisibleCases(result.functionTestCases.value.map((tc) => toFunctionTestCaseInput(tc, sig.params, sig.returnType)));
+        }
+        if (result.functionHiddenTestCases?.value.length) {
+          setFunctionHiddenCases(result.functionHiddenTestCases.value.map((tc) => toFunctionTestCaseInput(tc, sig.params, sig.returnType)));
+        }
+      }
+
       setExtractStatus("done");
       setEntryMethod("manual");
     } catch {
@@ -560,12 +1057,14 @@ export function ProgrammingProblemForm({ mode, backHref, cancelHref, initial }: 
 
   async function buildEntry(filename: string, text: string): Promise<BulkEntry> {
     const fields = await extractProblemFields(text);
+    const sig = fields.functionSignature?.value ?? null;
     return {
       filename,
       title: fields.title?.value ?? "",
       difficulty: fields.difficulty?.value ?? "Easy",
       status: "Draft",
       availability: "Locked",
+      accessType: "FREE",
       topic: fields.topic?.value ?? "",
       statement: fields.description?.value ?? "",
       inputFormat: fields.inputFormat?.value ?? "",
@@ -578,6 +1077,16 @@ export function ProgrammingProblemForm({ mode, backHref, cancelHref, initial }: 
       hiddenCases: fields.hiddenTestCases?.value.length ? fields.hiddenTestCases.value : [emptyCase()],
       starterCodeByLang: fields.starterCode?.value ?? {},
       officialSolutions: fields.solutions?.value ?? {},
+      executionStyle: sig ? "FUNCTION_ONLY" : "FULL_PROGRAM",
+      functionName: sig?.functionName ?? "",
+      functionParams: sig?.params ?? [],
+      functionReturnType: sig?.returnType ?? "int",
+      functionVisibleCases: sig && fields.functionTestCases?.value.length
+        ? fields.functionTestCases.value.map((tc) => toFunctionTestCaseInput(tc, sig.params, sig.returnType))
+        : [],
+      functionHiddenCases: sig && fields.functionHiddenTestCases?.value.length
+        ? fields.functionHiddenTestCases.value.map((tc) => toFunctionTestCaseInput(tc, sig.params, sig.returnType))
+        : [],
       lowConfidenceCount: fields.lowConfidenceCount,
     };
   }
@@ -703,6 +1212,23 @@ export function ProgrammingProblemForm({ mode, backHref, cancelHref, initial }: 
       if (entry.parseError) continue;
 
       const basename = entry.filename.split("/").pop() ?? entry.filename;
+
+      let functionSignaturePayload: FunctionSignature | null = null;
+      let functionTestCasesPayload: FunctionTestCase[] = [];
+      let functionHiddenTestCasesPayload: FunctionTestCase[] = [];
+
+      if (entry.executionStyle === "FUNCTION_ONLY") {
+        const visibleResult = buildFunctionTestCases(entry.functionVisibleCases, entry.functionParams, entry.functionReturnType);
+        const hiddenResult = buildFunctionTestCases(entry.functionHiddenCases, entry.functionParams, entry.functionReturnType);
+        if (visibleResult.error || hiddenResult.error) {
+          errors[i] = `Function Only test case error — ${visibleResult.error ?? hiddenResult.error}`;
+          continue;
+        }
+        functionSignaturePayload = { functionName: entry.functionName, params: entry.functionParams, returnType: entry.functionReturnType };
+        functionTestCasesPayload = visibleResult.result!;
+        functionHiddenTestCasesPayload = hiddenResult.result!;
+      }
+
       const payload = {
         title: entry.title.trim() || basename.replace(/\.[^.]+$/, ""),
         difficulty: entry.difficulty,
@@ -721,6 +1247,11 @@ export function ProgrammingProblemForm({ mode, backHref, cancelHref, initial }: 
         importedFileName: entry.filename,
         status: entry.status,
         availability: entry.availability,
+        accessType: entry.accessType,
+        executionStyle: entry.executionStyle,
+        functionSignature: functionSignaturePayload,
+        functionTestCases: functionTestCasesPayload,
+        functionHiddenTestCases: functionHiddenTestCasesPayload,
       };
 
       const result = await createProblem(payload);
@@ -771,6 +1302,26 @@ export function ProgrammingProblemForm({ mode, backHref, cancelHref, initial }: 
       return;
     }
     setFieldErrors({});
+
+    let functionSignaturePayload: FunctionSignature | null = null;
+    let functionTestCasesPayload: FunctionTestCase[] = [];
+    let functionHiddenTestCasesPayload: FunctionTestCase[] = [];
+
+    if (executionStyle === "FUNCTION_ONLY") {
+      if (!functionName.trim()) { setFormError("Function name is required."); return; }
+      if (functionParams.length === 0) { setFormError("At least one parameter is required."); return; }
+      if (functionParams.some((p) => !p.name.trim())) { setFormError("Every parameter needs a name."); return; }
+
+      const visibleResult = buildFunctionTestCases(functionVisibleCases, functionParams, functionReturnType);
+      if (visibleResult.error) { setFormError(`Visible test case error — ${visibleResult.error}`); return; }
+      const hiddenResult = buildFunctionTestCases(functionHiddenCases, functionParams, functionReturnType);
+      if (hiddenResult.error) { setFormError(`Hidden test case error — ${hiddenResult.error}`); return; }
+
+      functionSignaturePayload = { functionName: functionName.trim(), params: functionParams, returnType: functionReturnType };
+      functionTestCasesPayload = visibleResult.result!;
+      functionHiddenTestCasesPayload = hiddenResult.result!;
+    }
+
     setSubmitting(true);
 
     const payload = {
@@ -788,9 +1339,16 @@ export function ProgrammingProblemForm({ mode, backHref, cancelHref, initial }: 
       hiddenTestCases: hiddenCases,
       starterCodeByLanguage: starterCodeByLang,
       officialSolutions,
+      timeLimitMs: timeLimitMs.trim() === "" ? null : Number(timeLimitMs),
+      memoryLimitKb: memoryLimitKb.trim() === "" ? null : Number(memoryLimitKb),
       importedFileName: importedFiles.length > 0 ? importedFiles[0] : undefined,
       status,
       availability,
+      accessType,
+      executionStyle,
+      functionSignature: functionSignaturePayload,
+      functionTestCases: functionTestCasesPayload,
+      functionHiddenTestCases: functionHiddenTestCasesPayload,
     };
 
     if (mode === "create") {
@@ -898,7 +1456,11 @@ export function ProgrammingProblemForm({ mode, backHref, cancelHref, initial }: 
             )}
           </div>
 
-          <div className={`grid grid-cols-1 gap-6 ${status === "Published" ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
+          {/* Fixed column count, not one-per-field — CSS Grid wraps extra
+              fields (Availability when Published, Execution Style) onto a
+              second row on its own; matching the column count to the field
+              count only crams everything into one cramped row. */}
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-6">
             <div>
               <label className="font-label-md text-label-md font-bold text-on-surface flex items-center gap-2 mb-2">
                 Difficulty <span className="text-error">*</span>
@@ -921,7 +1483,37 @@ export function ProgrammingProblemForm({ mode, backHref, cancelHref, initial }: 
                 onChange={(e) => setStatus(e.target.value as QuestionStatus)}
                 className={textareaClass()}
               >
-                {QUESTION_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                {QUESTION_STATUSES.map((s) => (
+                  <option key={s} value={s} disabled={s === "Published" && !hasMeaningfulHiddenCase}>
+                    {s === "Published" && !hasMeaningfulHiddenCase ? "Published (add a hidden test case first)" : s}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="font-label-md text-label-md font-bold text-on-surface block mb-2">
+                Access Type <span className="text-error">*</span>
+              </label>
+              <select
+                value={accessType}
+                onChange={(e) => setAccessType(e.target.value as AccessType)}
+                className={textareaClass()}
+              >
+                {ACCESS_TYPES.map((a) => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="font-label-md text-label-md font-bold text-on-surface block mb-2">
+                Execution Style <span className="text-error">*</span>
+              </label>
+              <select
+                value={executionStyle}
+                onChange={(e) => setExecutionStyle(e.target.value as ExecutionStyle)}
+                className={textareaClass()}
+              >
+                {EXECUTION_STYLES.map((s) => (
+                  <option key={s} value={s}>{s === "FULL_PROGRAM" ? "Full Program" : "Function Only"}</option>
+                ))}
               </select>
             </div>
             {status === "Published" && (
@@ -954,6 +1546,27 @@ export function ProgrammingProblemForm({ mode, backHref, cancelHref, initial }: 
               )}
             </div>
           </div>
+
+          {executionStyle === "FUNCTION_ONLY" && (
+            <div className="pt-4 border-t border-outline-variant/20 space-y-6">
+              <FunctionSignatureBuilder
+                functionName={functionName}
+                onFunctionNameChange={setFunctionName}
+                params={functionParams}
+                onParamsChange={setFunctionParams}
+                onRemoveParam={(idx) => {
+                  setFunctionParams((prev) => prev.filter((_, i) => i !== idx));
+                  setFunctionVisibleCases((prev) => removeParamIndexFromCases(prev, idx));
+                  setFunctionHiddenCases((prev) => removeParamIndexFromCases(prev, idx));
+                }}
+                returnType={functionReturnType}
+                onReturnTypeChange={setFunctionReturnType}
+              />
+              <FunctionStubPreview
+                signature={{ functionName, params: functionParams, returnType: functionReturnType }}
+              />
+            </div>
+          )}
 
           <div>
             <label className="font-label-md text-label-md font-bold text-on-surface flex items-center gap-2 mb-2">
@@ -1014,6 +1627,43 @@ export function ProgrammingProblemForm({ mode, backHref, cancelHref, initial }: 
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             <div>
+              <label className="font-label-md text-label-md font-bold text-on-surface block mb-2">
+                Time Limit (ms)
+              </label>
+              <input
+                type="number"
+                min={MIN_TIME_LIMIT_MS}
+                max={MAX_TIME_LIMIT_MS}
+                value={timeLimitMs}
+                onChange={(e) => setTimeLimitMs(e.target.value)}
+                placeholder={`${DEFAULT_TIME_LIMIT_MS} (default)`}
+                className={textareaClass()}
+              />
+              <p className="mt-1 font-label-sm text-label-sm text-on-surface-variant">
+                Leave blank to use the platform default ({DEFAULT_TIME_LIMIT_MS} ms).
+              </p>
+            </div>
+            <div>
+              <label className="font-label-md text-label-md font-bold text-on-surface block mb-2">
+                Memory Limit (KB)
+              </label>
+              <input
+                type="number"
+                min={MIN_MEMORY_LIMIT_KB}
+                max={MAX_MEMORY_LIMIT_KB}
+                value={memoryLimitKb}
+                onChange={(e) => setMemoryLimitKb(e.target.value)}
+                placeholder={`${DEFAULT_MEMORY_LIMIT_KB} (default)`}
+                className={textareaClass()}
+              />
+              <p className="mt-1 font-label-sm text-label-sm text-on-surface-variant">
+                Leave blank to use the platform default ({DEFAULT_MEMORY_LIMIT_KB} KB).
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+            <div>
               <label className="font-label-md text-label-md font-bold text-on-surface flex items-center gap-2 mb-2">
                 Sample Input{lowConfFields.has("sampleInput") && <ConfBadge />}
               </label>
@@ -1050,45 +1700,101 @@ export function ProgrammingProblemForm({ mode, backHref, cancelHref, initial }: 
           </div>
 
           <div className="pt-4 border-t border-outline-variant/20">
-            <TestCaseEditor
-              title="Visible Test Cases"
-              description="Shown to students on the problem page."
-              cases={visibleCases}
-              onChange={setVisibleCases}
-              addLabel="Add Test Case"
-            />
+            {executionStyle === "FUNCTION_ONLY" ? (
+              <FunctionTestCaseEditor
+                title="Visible Test Cases"
+                description="Shown to students on the problem page."
+                params={functionParams}
+                returnType={functionReturnType}
+                cases={functionVisibleCases}
+                onChange={setFunctionVisibleCases}
+                addLabel="Add Test Case"
+              />
+            ) : (
+              <TestCaseEditor
+                title="Visible Test Cases"
+                description="Shown to students on the problem page."
+                cases={visibleCases}
+                onChange={setVisibleCases}
+                addLabel="Add Test Case"
+              />
+            )}
           </div>
 
           <div className="pt-4 border-t border-outline-variant/20">
-            <TestCaseEditor
-              title="Hidden Test Cases"
-              description="Used only during submission grading — never shown to students."
-              locked
-              cases={hiddenCases}
-              onChange={setHiddenCases}
-              addLabel="Add Hidden Test Case"
-            />
+            {executionStyle === "FUNCTION_ONLY" ? (
+              <FunctionTestCaseEditor
+                title="Hidden Test Cases"
+                description="Used only during submission grading — never shown to students."
+                locked
+                params={functionParams}
+                returnType={functionReturnType}
+                cases={functionHiddenCases}
+                onChange={setFunctionHiddenCases}
+                addLabel="Add Hidden Test Case"
+              />
+            ) : (
+              <TestCaseEditor
+                title="Hidden Test Cases"
+                description="Used only during submission grading — never shown to students."
+                locked
+                cases={hiddenCases}
+                onChange={setHiddenCases}
+                addLabel="Add Hidden Test Case"
+              />
+            )}
+            {!hasMeaningfulHiddenCase && (
+              <div className="mt-4 flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-amber-800 font-body-md text-body-md">
+                <span className="material-symbols-outlined text-[18px] shrink-0">warning</span>
+                <span>
+                  This problem can&apos;t be published yet. Without a hidden test case
+                  {executionStyle === "FUNCTION_ONLY" ? "" : " (with an expected output filled in)"}, grading would
+                  fall back to the visible test cases above — which students can already see — letting them
+                  hardcode the answer instead of solving the problem.
+                </span>
+              </div>
+            )}
           </div>
 
-          <div className="pt-4 border-t border-outline-variant/20">
-            <CodeLanguageEditor
-              title="Starter Code"
-              description="Boilerplate shown to students when they open the problem, per language."
-              value={starterCodeByLang}
-              onChange={setStarterCodeByLang}
-              placeholder={(lang) => `Enter starter code for ${lang.label}...`}
-            />
-          </div>
+          {executionStyle === "FULL_PROGRAM" && (
+            <div className="pt-4 border-t border-outline-variant/20">
+              <CodeLanguageEditor
+                title="Starter Code"
+                description="Boilerplate shown to students when they open the problem, per language."
+                value={starterCodeByLang}
+                onChange={setStarterCodeByLang}
+                placeholder={(lang) => `Enter starter code for ${lang.label}...`}
+              />
+            </div>
+          )}
 
           <div className="pt-4 border-t border-outline-variant/20">
             <CodeLanguageEditor
               title="Official Solutions"
-              description="Complete reference solution per language. For admin reference only — never shown to students."
+              description={
+                executionStyle === "FUNCTION_ONLY"
+                  ? "Reference implementation of just the function body, per language. For admin reference only — never shown to students."
+                  : "Complete reference solution per language. For admin reference only — never shown to students."
+              }
               value={officialSolutions}
               onChange={setOfficialSolutions}
-              placeholder={(lang) => `Enter the official ${lang.label} solution...`}
+              placeholder={(lang) =>
+                executionStyle === "FUNCTION_ONLY"
+                  ? `Enter the official ${lang.label} function body...`
+                  : `Enter the official ${lang.label} solution...`
+              }
+              languages={executionStyle === "FUNCTION_ONLY" ? FUNCTION_ONLY_CODE_LANGUAGES : CODE_LANGUAGES}
             />
           </div>
+
+          {executionStyle === "FUNCTION_ONLY" && (
+            <div className="pt-4 border-t border-outline-variant/20">
+              <DriverPreview
+                signature={{ functionName, params: functionParams, returnType: functionReturnType }}
+                officialSolutions={officialSolutions}
+              />
+            </div>
+          )}
 
           <div className="flex items-center justify-end gap-3 pt-2">
             <Button type="button" variant="secondary" onClick={() => router.push(cancelHref)} disabled={busy}>
@@ -1269,7 +1975,7 @@ export function ProgrammingProblemForm({ mode, backHref, cancelHref, initial }: 
                       <p className="font-label-sm text-label-sm text-on-surface-variant truncate">
                         {entry.parseError
                           ? entry.parseError
-                          : `${entry.filename.split("/").pop()} · ${entry.difficulty}${entry.lowConfidenceCount > 0 ? ` · ${entry.lowConfidenceCount} low-confidence field${entry.lowConfidenceCount !== 1 ? "s" : ""}` : ""}`}
+                          : `${entry.filename.split("/").pop()} · ${entry.difficulty}${entry.executionStyle === "FUNCTION_ONLY" ? " · Function Only" : ""}${entry.lowConfidenceCount > 0 ? ` · ${entry.lowConfidenceCount} low-confidence field${entry.lowConfidenceCount !== 1 ? "s" : ""}` : ""}`}
                       </p>
                       {bulkImportErrors[idx] && (
                         <p className="font-label-sm text-label-sm text-error mt-0.5">{bulkImportErrors[idx]}</p>

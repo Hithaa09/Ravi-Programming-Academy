@@ -154,6 +154,14 @@ export function AdminProgrammingProblemsTable({
                             {p.availability === "Available" ? "lock_open" : "lock"}
                           </span>
                         )}
+                        {p.executionStyle === "FUNCTION_ONLY" && (
+                          <span
+                            className="material-symbols-outlined text-[14px] shrink-0 mt-0.5 text-on-surface-variant/50"
+                            title="Function Only (LeetCode-style)"
+                          >
+                            function
+                          </span>
+                        )}
                         <div className="line-clamp-2" title={p.title}>{p.title}</div>
                       </div>
                     </td>
@@ -176,6 +184,7 @@ export function AdminProgrammingProblemsTable({
                       <InfoPopover rows={[
                         { label: "Created", value: formatDate(p.createdAt) },
                         { label: "Updated", value: formatDate(p.updatedAt) },
+                        { label: "Execution Style", value: p.executionStyle === "FUNCTION_ONLY" ? "Function Only" : "Full Program" },
                         { label: "Visible Tests", value: String(p.testCaseCount) },
                         { label: "Hidden Tests", value: String(p.hiddenTestCaseCount) },
                         { label: "Topics", value: p.topics.join(", ") || "—" },

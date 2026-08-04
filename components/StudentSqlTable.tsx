@@ -13,7 +13,12 @@ const PAGE_SIZE = 10;
 const DIFFICULTY_OPTIONS = ["All", "Easy", "Medium", "Hard"] as const;
 type DifficultyFilter = (typeof DIFFICULTY_OPTIONS)[number];
 
-export function StudentSqlTable({ problems }: { problems: SqlProblemListItem[] }) {
+interface StudentSqlTableProps {
+  problems: SqlProblemListItem[];
+  hasLifetimeAccess: boolean;
+}
+
+export function StudentSqlTable({ problems, hasLifetimeAccess }: StudentSqlTableProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -95,16 +100,21 @@ export function StudentSqlTable({ problems }: { problems: SqlProblemListItem[] }
           )}
           {pageItems.map((p) => {
             const locked = p.availability === "Locked";
+            // Only relevant once a problem is otherwise Available — a
+            // Locked+Premium problem still shows as plain Locked, since
+            // availability is the more fundamental gate.
+            const premiumLocked = !locked && p.accessType === "PREMIUM" && !hasLifetimeAccess;
+            const canOpen = !locked && !premiumLocked;
             return (
-              <div key={p.id} className={`group flex items-center justify-between gap-3 px-6 py-4 transition-colors ${locked ? "opacity-60" : "hover:bg-surface-container-highest/20"}`}>
+              <div key={p.id} className={`group flex items-center justify-between gap-3 px-6 py-4 transition-colors ${canOpen ? "hover:bg-surface-container-highest/20" : "opacity-60"}`}>
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <DifficultyDot difficulty={p.difficulty} />
-                  {locked ? (
-                    <span className="font-label-md text-label-md text-on-surface-variant truncate min-w-0">{p.title}</span>
-                  ) : (
+                  {canOpen ? (
                     <Link href={`/solve/sql/${p.id}`} className="font-label-md text-label-md text-on-surface group-hover:text-secondary transition-colors truncate min-w-0">
                       {p.title}
                     </Link>
+                  ) : (
+                    <span className="font-label-md text-label-md text-on-surface-variant truncate min-w-0">{p.title}</span>
                   )}
                   <span className="font-label-sm text-label-sm text-on-surface-variant shrink-0">{p.difficulty}</span>
                 </div>
@@ -113,6 +123,10 @@ export function StudentSqlTable({ problems }: { problems: SqlProblemListItem[] }
                     <span className="inline-flex items-center gap-1.5 font-label-md text-label-md text-on-surface-variant/60 px-4 py-1.5 whitespace-nowrap">
                       <span className="material-symbols-outlined text-[16px]">lock</span> Locked
                     </span>
+                  ) : premiumLocked ? (
+                    <Link href="/buy-subscription" className="inline-flex items-center gap-1.5 font-label-md text-label-md text-tertiary-fixed-dim border border-tertiary-fixed-dim/40 px-4 py-1.5 rounded-lg hover:bg-tertiary-fixed-dim/5 transition-colors whitespace-nowrap">
+                      <span className="material-symbols-outlined text-[16px]">workspace_premium</span> Premium
+                    </Link>
                   ) : (
                     <Link href={`/solve/sql/${p.id}`} className="bg-primary-container text-white font-label-md text-label-md px-4 py-1.5 rounded-lg hover:bg-primary-fixed-variant transition-colors shadow-sm whitespace-nowrap">
                       Solve Problem

@@ -41,6 +41,9 @@ const statusStyles: Record<ProblemStatus | SubmissionStatus, string> = {
   Accepted: "bg-status-accepted-bg text-status-accepted-text",
   "Wrong Answer": "bg-status-wrong-bg text-status-wrong-text",
   "Time Limit Exceeded": "bg-status-tle-bg text-status-tle-text",
+  "Compilation Error": "bg-status-wrong-bg text-status-wrong-text",
+  "Runtime Error": "bg-status-wrong-bg text-status-wrong-text",
+  "Memory Limit Exceeded": "bg-status-tle-bg text-status-tle-text",
   Error: "bg-amber-100 text-amber-700",
 };
 

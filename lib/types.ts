@@ -6,6 +6,11 @@ export type QuestionStatus = "Draft" | "Published" | "Archived";
 
 export type QuestionAvailability = "Locked" | "Available";
 
+// Independent of QuestionStatus/QuestionAvailability — a problem's
+// Draft/Published lifecycle and Locked/Available visibility say nothing
+// about whether it requires purchased access.
+export type AccessType = "FREE" | "PREMIUM";
+
 export type ProblemStatus = "Solved" | "Attempted" | "Not Solved";
 
 export interface ProblemExample {
@@ -98,7 +103,14 @@ export interface SqlProblem {
   importedFileName?: string;
 }
 
-export type SubmissionStatus = "Accepted" | "Wrong Answer" | "Time Limit Exceeded" | "Error";
+export type SubmissionStatus =
+  | "Accepted"
+  | "Wrong Answer"
+  | "Time Limit Exceeded"
+  | "Compilation Error"
+  | "Runtime Error"
+  | "Memory Limit Exceeded"
+  | "Error";
 
 export type SubmissionType = "Programming" | "SQL";
 

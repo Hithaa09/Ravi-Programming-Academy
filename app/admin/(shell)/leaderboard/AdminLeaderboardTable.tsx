@@ -36,11 +36,12 @@ export function AdminLeaderboardTable({ data, totalStudents }: Props) {
 
   const stats = useMemo(() => {
     const sqlSolvedTotal = leaderboard.reduce((sum, e) => sum + e.sqlProblemsSolved, 0);
+    const programmingSolvedTotal = leaderboard.reduce((sum, e) => sum + e.programmingProblemsSolved, 0);
     const totalSqlSubmissions = leaderboard.reduce((sum, e) => sum + e.totalSqlSubmissions, 0);
     const averageSqlAccuracy = leaderboard.length > 0
       ? Math.round((leaderboard.reduce((sum, e) => sum + e.sqlAccuracy, 0) / leaderboard.length) * 10) / 10
       : 0;
-    return { sqlSolvedTotal, totalSqlSubmissions, averageSqlAccuracy };
+    return { sqlSolvedTotal, programmingSolvedTotal, totalSqlSubmissions, averageSqlAccuracy };
   }, [leaderboard]);
 
   function handleRangeChange(next: InsightsRange) {
@@ -52,7 +53,7 @@ export function AdminLeaderboardTable({ data, totalStudents }: Props) {
     <>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
         <StatCard value={totalStudents} label="Total Students" delta="Registered" icon="emoji_events" />
-        <StatCard value="—" label="Programming Solved" delta="Pending Judge0 integration" icon="code" />
+        <StatCard value={stats.programmingSolvedTotal.toLocaleString()} label="Programming Solved" delta={range} icon="code" />
         <StatCard value={stats.sqlSolvedTotal.toLocaleString()} label="SQL Solved" delta={range} icon="database" />
         <StatCard value={stats.totalSqlSubmissions.toLocaleString()} label="Total SQL Submissions" delta={range} icon="description" />
         <StatCard value={`${stats.averageSqlAccuracy}%`} label="Average SQL Accuracy" delta={range} icon="trending_up" />
@@ -79,14 +80,14 @@ export function AdminLeaderboardTable({ data, totalStudents }: Props) {
                 <th className="px-6 py-4 text-right">SQL Solved</th>
                 <th className="px-6 py-4 text-right">SQL Accuracy</th>
                 <th className="px-6 py-4 text-right">Total SQL Submissions</th>
-                <th className="px-6 py-4 text-right">Latest Accepted</th>
+                <th className="px-6 py-4 text-right">First Accepted</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant/10 text-sm">
               {pageItems.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-6 py-10 text-center font-body-md text-body-md text-on-surface-variant">
-                    No SQL submissions yet for this period.
+                    No submissions yet for this period.
                   </td>
                 </tr>
               ) : pageItems.map((l) => (
@@ -109,11 +110,11 @@ export function AdminLeaderboardTable({ data, totalStudents }: Props) {
                       </div>
                     </Link>
                   </td>
-                  <td className="px-6 py-4 text-right text-on-surface-variant">—</td>
+                  <td className="px-6 py-4 text-right text-on-surface-variant">{l.programmingProblemsSolved}</td>
                   <td className="px-6 py-4 text-right text-on-surface-variant">{l.sqlProblemsSolved}</td>
                   <td className="px-6 py-4 text-right text-on-surface-variant">{l.sqlAccuracy}%</td>
                   <td className="px-6 py-4 text-right text-on-surface-variant">{l.totalSqlSubmissions}</td>
-                  <td className="px-6 py-4 text-right text-on-surface-variant">{formatDate(l.latestAcceptedSubmission)}</td>
+                  <td className="px-6 py-4 text-right text-on-surface-variant">{formatDate(l.firstAcceptedSubmission)}</td>
                 </tr>
               ))}
             </tbody>

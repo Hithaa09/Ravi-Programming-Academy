@@ -2,13 +2,14 @@
 
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
+import { logError } from "@/lib/log";
 
 // ─── Auth guard ───────────────────────────────────────────────────────────────
 
 async function requireAdmin(): Promise<void> {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  const role = user?.user_metadata?.role ?? user?.app_metadata?.role;
+  const role = user?.app_metadata?.role;
   if (!user || role !== "admin") throw new Error("Unauthorized");
 }
 
@@ -20,7 +21,22 @@ export interface StudentProfile {
   fullName: string | null;
   role: string;
   status: string;
+  hasLifetimeAccess: boolean;
   createdAt: Date;
+}
+
+export interface StudentPurchase {
+  id: number;
+  provider: string;
+  providerReference: string | null;
+  amount: number | null;
+  currency: string;
+  status: string;
+  createdAt: Date;
+}
+
+export interface StudentDetail extends StudentProfile {
+  purchases: StudentPurchase[];
 }
 
 export interface StudentListResult {
@@ -32,8 +48,13 @@ export interface StudentStats {
   totalSubmissions: number;
   sqlProblemsSolved: number;
   sqlAccuracy: number;
+  programmingSubmissionsCount: number;
+  programmingProblemsSolved: number;
+  programmingAccuracy: number;
   recentSubmissions: {
     id: number;
+    type: "sql" | "programming";
+    language: string;
     problemTitle: string;
     verdict: string;
     executionTimeMs: number;
@@ -77,6 +98,7 @@ export async function getStudents(options: {
         fullName: true,
         role: true,
         status: true,
+        hasLifetimeAccess: true,
         createdAt: true,
       },
     }),
@@ -88,18 +110,31 @@ export async function getStudents(options: {
 
 // ─── Student detail ───────────────────────────────────────────────────────────
 
-export async function getStudentById(id: string): Promise<StudentProfile | null> {
+export async function getStudentById(id: string): Promise<StudentDetail | null> {
   await requireAdmin();
 
-  const profile = await prisma.profile.findUnique({
-    where: { id },
+  const profile = await prisma.profile.findFirst({
+    where: { id, role: "student" },
     select: {
       id: true,
       email: true,
       fullName: true,
       role: true,
       status: true,
+      hasLifetimeAccess: true,
       createdAt: true,
+      purchases: {
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          provider: true,
+          providerReference: true,
+          amount: true,
+          currency: true,
+          status: true,
+          createdAt: true,
+        },
+      },
     },
   });
 
@@ -109,38 +144,65 @@ export async function getStudentById(id: string): Promise<StudentProfile | null>
 export async function getStudentStats(studentId: string): Promise<StudentStats> {
   await requireAdmin();
 
-  const allSubs = await prisma.sqlSubmission.findMany({
-    where: { studentId },
-    select: {
-      id: true,
-      problemId: true,
-      problemTitle: true,
-      verdict: true,
-      executionTimeMs: true,
-      submittedAt: true,
-    },
-    orderBy: { submittedAt: "desc" },
-  });
+  const [sqlSubs, programmingSubs] = await Promise.all([
+    prisma.sqlSubmission.findMany({
+      where: { studentId },
+      select: {
+        id: true,
+        problemId: true,
+        problemTitle: true,
+        verdict: true,
+        executionTimeMs: true,
+        submittedAt: true,
+      },
+      orderBy: { submittedAt: "desc" },
+    }),
+    prisma.programmingSubmission.findMany({
+      where: { studentId },
+      select: {
+        id: true,
+        problemId: true,
+        problemTitle: true,
+        language: true,
+        verdict: true,
+        executionTimeMs: true,
+        submittedAt: true,
+      },
+      orderBy: { submittedAt: "desc" },
+    }),
+  ]);
 
-  const totalSubmissions = allSubs.length;
-  const accepted = allSubs.filter((s) => s.verdict === "Accepted");
+  const totalSubmissions = sqlSubs.length;
+  const accepted = sqlSubs.filter((s) => s.verdict === "Accepted");
   const sqlProblemsSolved = new Set(accepted.map((s) => s.problemId)).size;
   const sqlAccuracy =
     totalSubmissions > 0
       ? Math.round((accepted.length / totalSubmissions) * 1000) / 10
       : 0;
 
+  const programmingSubmissionsCount = programmingSubs.length;
+  const programmingAccepted = programmingSubs.filter((s) => s.verdict === "Accepted");
+  const programmingProblemsSolved = new Set(programmingAccepted.map((s) => s.problemId)).size;
+  const programmingAccuracy =
+    programmingSubmissionsCount > 0
+      ? Math.round((programmingAccepted.length / programmingSubmissionsCount) * 1000) / 10
+      : 0;
+
+  const recentSubmissions = [
+    ...sqlSubs.map((s) => ({ id: s.id, type: "sql" as const, language: "SQL", problemTitle: s.problemTitle, verdict: s.verdict, executionTimeMs: s.executionTimeMs, submittedAt: s.submittedAt })),
+    ...programmingSubs.map((s) => ({ id: s.id, type: "programming" as const, language: s.language, problemTitle: s.problemTitle, verdict: s.verdict, executionTimeMs: s.executionTimeMs, submittedAt: s.submittedAt })),
+  ]
+    .sort((a, b) => b.submittedAt.getTime() - a.submittedAt.getTime())
+    .slice(0, 5);
+
   return {
     totalSubmissions,
     sqlProblemsSolved,
     sqlAccuracy,
-    recentSubmissions: allSubs.slice(0, 5).map((s) => ({
-      id: s.id,
-      problemTitle: s.problemTitle,
-      verdict: s.verdict,
-      executionTimeMs: s.executionTimeMs,
-      submittedAt: s.submittedAt,
-    })),
+    programmingSubmissionsCount,
+    programmingProblemsSolved,
+    programmingAccuracy,
+    recentSubmissions,
   };
 }
 
@@ -148,16 +210,16 @@ export async function getStudentStats(studentId: string): Promise<StudentStats> 
 
 export async function activateStudent(studentId: string): Promise<void> {
   await requireAdmin();
-  await prisma.profile.update({
-    where: { id: studentId },
+  await prisma.profile.updateMany({
+    where: { id: studentId, role: "student" },
     data: { status: "active" },
   });
 }
 
 export async function suspendStudent(studentId: string): Promise<void> {
   await requireAdmin();
-  await prisma.profile.update({
-    where: { id: studentId },
+  await prisma.profile.updateMany({
+    where: { id: studentId, role: "student" },
     data: { status: "suspended" },
   });
 }
@@ -195,17 +257,34 @@ export async function createStudent(input: {
   if (error) return { error: error.message };
   if (!data.user) return { error: "User creation succeeded but no user was returned." };
 
-  await prisma.profile.upsert({
-    where: { id: data.user.id },
-    update: {},
-    create: {
-      id: data.user.id,
-      email: input.email,
-      fullName: input.fullName || null,
-      role: "student",
-      status: "active",
-    },
-  });
+  try {
+    await prisma.profile.upsert({
+      where: { id: data.user.id },
+      update: {},
+      create: {
+        id: data.user.id,
+        email: input.email,
+        fullName: input.fullName || null,
+        role: "student",
+        status: "active",
+      },
+    });
+  } catch (profileError) {
+    const profileErrorMessage = profileError instanceof Error ? profileError.message : String(profileError);
+    logError("createStudent: Profile creation failed, rolling back Supabase Auth user", {
+      context: { supabaseUserId: data.user.id, email: input.email, error: profileErrorMessage },
+    });
+
+    const { error: deleteError } = await adminSupabase.auth.admin.deleteUser(data.user.id);
+    if (deleteError) {
+      logError("createStudent: rollback failed — orphaned Supabase Auth user requires manual cleanup", {
+        context: { supabaseUserId: data.user.id, email: input.email, error: deleteError.message },
+      });
+      return { error: "Failed to create student account. The account may be in an inconsistent state — please contact support before retrying with this email." };
+    }
+
+    return { error: "Failed to create student account. No account was left behind — please try again." };
+  }
 
   return { error: null };
 }

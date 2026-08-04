@@ -6,7 +6,6 @@ import { usePathname, useRouter } from "next/navigation";
 import clsx from "clsx";
 import type { User } from "@supabase/supabase-js";
 import { Toaster } from "sonner";
-import { ADMIN_NOTIFICATIONS } from "@/lib/mock-data";
 import { createClient } from "@/lib/supabase/client";
 
 interface NavItem {
@@ -22,6 +21,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "programming-problems", label: "Programming Problems", shortLabel: "Programming", icon: "code", href: "/admin/programming-problems" },
   { id: "sql-problems", label: "SQL Problems", shortLabel: "SQL", icon: "database", href: "/admin/sql-problems" },
   { id: "students", label: "Students", icon: "group", href: "/admin/students" },
+  { id: "purchases", label: "Purchases", icon: "receipt_long", href: "/admin/purchases" },
   { id: "submissions", label: "Submissions", icon: "description", href: "/admin/submissions" },
   { id: "leaderboard", label: "Leaderboard", icon: "emoji_events", href: "/admin/leaderboard" },
   { id: "settings", label: "Settings", icon: "settings", href: "/admin/settings" },
@@ -34,23 +34,21 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 
   const [profileOpen, setProfileOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [notifOpen, setNotifOpen] = useState(false);
   const [authUser, setAuthUser] = useState<User | null>(null);
-  const unreadCount = ADMIN_NOTIFICATIONS.filter((n) => n.unread).length;
 
   useEffect(() => {
     const supabase = createClient();
 
     async function checkSession() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.replace("/admin/login"); return; }
-      const role = session.user?.user_metadata?.role ?? session.user?.app_metadata?.role;
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { router.replace("/admin/login"); return; }
+      const role = user.app_metadata?.role;
       if (role !== "admin") {
         await supabase.auth.signOut();
         router.replace("/admin/login");
         return;
       }
-      setAuthUser(session.user);
+      setAuthUser(user);
     }
 
     checkSession();
@@ -129,43 +127,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
             <div className="relative">
               <button
                 type="button"
-                onClick={() => { setNotifOpen((v) => !v); setProfileOpen(false); }}
-                className="text-on-surface-variant hover:bg-surface-container-highest/50 rounded-full p-2 transition-colors relative"
-              >
-                <span className="material-symbols-outlined">notifications</span>
-                {unreadCount > 0 && <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-error rounded-full border-2 border-surface" />}
-              </button>
-              {notifOpen && (
-                <div
-                  className="absolute right-0 mt-2 w-80 max-w-[90vw] bg-surface-container-lowest border border-outline-variant/20 rounded-xl shadow-card overflow-hidden z-30"
-                  onMouseLeave={() => setNotifOpen(false)}
-                >
-                  <div className="px-4 py-3 border-b border-outline-variant/10 flex items-center justify-between">
-                    <p className="font-body-md text-body-md font-bold text-on-surface">Notifications</p>
-                    {unreadCount > 0 && <span className="font-label-sm text-label-sm text-secondary font-semibold">{unreadCount} new</span>}
-                  </div>
-                  <div className="max-h-80 overflow-y-auto custom-scrollbar">
-                    {ADMIN_NOTIFICATIONS.map((n, i) => (
-                      <div key={i} className={clsx("flex items-start gap-3 px-4 py-3 border-b border-outline-variant/10 last:border-0", n.unread && "bg-secondary/5")}>
-                        <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: n.iconBg }}>
-                          <span className="material-symbols-outlined text-[18px]" style={{ color: n.iconColor }}>{n.icon}</span>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-body-md text-body-md font-medium text-on-surface">{n.title}</p>
-                          <p className="font-label-sm text-label-sm text-on-surface-variant">{n.subtitle}</p>
-                          <p className="font-label-sm text-label-sm text-on-surface-variant/70 mt-0.5">{n.time}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="h-8 w-px bg-outline-variant/30 mx-2" />
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => { setProfileOpen((v) => !v); setNotifOpen(false); }}
+                onClick={() => setProfileOpen((v) => !v)}
                 className="flex items-center gap-2 hover:bg-surface-container-highest/30 py-1 px-2 rounded-full transition-colors"
               >
                 <div className="w-8 h-8 rounded-full bg-primary-container flex items-center justify-center text-white font-bold font-label-md">

@@ -77,6 +77,14 @@ function parseAndValidate(csvText: string): ParsedRow[] {
     const status = rawStatus || "Draft";
     if (rawStatus && !STATUSES.includes(rawStatus as typeof STATUSES[number]))
       errors.push(`status must be one of: ${STATUSES.join(", ")}`);
+    // CSV import never carries hidden test cases (the format has no column
+    // for them — see handleConfirm below, which always sends
+    // hiddenTestCases: []). Publishing without one would let students see
+    // their own grading data via the visible test cases, so the server
+    // rejects it too — this just surfaces that as a clear per-row reason
+    // instead of a silent skip.
+    if (status === "Published")
+      errors.push(`Programming problems can't be published via CSV import (no hidden test case can be provided this way) — import as Draft, then add a hidden test case and publish from the Edit page.`);
     const rawAvailability = get("availability");
     const availability = rawAvailability || "Locked";
     if (rawAvailability && !AVAILABILITIES.includes(rawAvailability as typeof AVAILABILITIES[number]))
@@ -165,6 +173,13 @@ export default function BulkUploadProgrammingPage() {
         officialSolutions: {},
         status: r.status,
         availability: r.availability,
+        // CSV import has no column for this yet — every bulk-imported
+        // problem starts FREE; mark it Premium from the Edit page if needed.
+        accessType: "FREE",
+        // CSV is a flat format with no column for a function signature or
+        // structured test cases — every CSV-imported problem is Full
+        // Program. Use the PDF/DOCX/TXT/ZIP import for Function Only.
+        executionStyle: "FULL_PROGRAM",
       }));
     const res = await bulkCreateProgrammingProblems(validRows);
     setImportResult(res);
@@ -307,6 +322,8 @@ export default function BulkUploadProgrammingPage() {
           <p>Upload a CSV file to bulk-import programming problems.</p>
           <p><strong>Required:</strong> title, difficulty (Easy / Medium / Hard)</p>
           <p><strong>Optional:</strong> topics (pipe-separated), description, inputFormat, outputFormat, constraints (pipe-separated), sampleInput, sampleOutput, explanation, status (Draft / Published / Archived), availability (Locked / Available)</p>
+          <p><strong>Note:</strong> rows with status = Published will be rejected — CSV import can&apos;t include hidden test cases, and publishing without one isn&apos;t allowed. Import as Draft, then add a hidden test case and publish from the Edit page.</p>
+          <p><strong>Note:</strong> CSV import always creates Full Program problems (this flat format has no column for a function signature or structured test cases). For Function Only (LeetCode-style) problems, use the PDF/DOCX/TXT/ZIP import instead — it can detect a &ldquo;Function Signature&rdquo; section — or add one manually.</p>
           <p className="pt-0.5">
             <button type="button" onClick={downloadTemplate} className="text-secondary underline font-medium hover:text-secondary/80 transition-colors">
               Download CSV template

@@ -24,11 +24,34 @@ model ProgrammingProblem {
   hiddenTestCases       Json     @default("[]")
   starterCodeByLanguage Json     @default("{}")
   officialSolutions     Json     @default("{}")
+  // Nullable = "use the platform default" (see lib/execution-limits.ts).
+  // Existing rows read back as NULL, so old problems keep today's behavior
+  // with no backfill needed.
+  timeLimitMs           Int?
+  memoryLimitKb         Int?
   importedFileName      String?
   status                String   @default("Draft")
   availability          String   @default("Locked")
+  // Independent of status/availability — a Draft problem can be marked
+  // Premium ahead of publishing, and Published/Available never implies Free.
+  accessType            String   @default("FREE")
+  // FULL_PROGRAM (default, HackerRank-style — student writes the whole file)
+  // or FUNCTION_ONLY (LeetCode-style — student writes only the function
+  // body; see lib/wrappers for driver-generation). Existing rows default to
+  // FULL_PROGRAM with functionSignature null, so old problems/submissions
+  // are completely unaffected.
+  executionStyle        String   @default("FULL_PROGRAM")
+  // FunctionSignature (lib/wrappers/types.ts), null for FULL_PROGRAM.
+  functionSignature     Json?
+  // FunctionTestCase[] — structured {args, expected} pairs, only meaningful
+  // when executionStyle is FUNCTION_ONLY. Deliberately separate fields from
+  // testCases/hiddenTestCases (not a repurposed shape) so a Full Program
+  // reader can never misinterpret structured args as raw stdin text.
+  functionTestCases       Json   @default("[]")
+  functionHiddenTestCases Json   @default("[]")
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
+  submissions           ProgrammingSubmission[]
 
   @@map("programming_problems")
 }
@@ -52,6 +75,9 @@ model SqlProblem {
   importedFileName      String?
   status                String           @default("Draft")
   availability          String           @default("Locked")
+  // Independent of status/availability — see the identical comment on
+  // ProgrammingProblem.accessType.
+  accessType            String           @default("FREE")
   createdAt             DateTime         @default(now())
   updatedAt             DateTime         @updatedAt
   submissions           SqlSubmission[]
@@ -64,7 +90,11 @@ model SqlSubmission {
   studentId       String
   studentEmail    String
   problemId       Int
-  problem         SqlProblem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  // Restrict, not Cascade: a problem with submission history must never be
+  // deletable in a way that silently destroys students' grading records,
+  // leaderboard standing, or dashboard stats. deleteSqlProblem() already
+  // blocks this at the application layer; this is the DB-level backstop.
+  problem         SqlProblem @relation(fields: [problemId], references: [id], onDelete: Restrict)
   problemTitle    String
   query           String
   verdict         String
@@ -80,15 +110,113 @@ model SqlSubmission {
 }
 
 model Profile {
-  id             String          @id
-  email          String          @unique
-  fullName       String?
-  role           String          @default("student")
-  status         String          @default("active")
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  sqlSubmissions SqlSubmission[]
+  id                     String                   @id
+  email                  String                   @unique
+  fullName               String?
+  role                   String                   @default("student")
+  status                 String                   @default("active")
+  // Fast day-to-day access-control read. The Purchase model below is the
+  // auditable record of how/when this became true; this flag is what every
+  // premium gate actually checks.
+  hasLifetimeAccess      Boolean                  @default(false)
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+  sqlSubmissions         SqlSubmission[]
+  programmingSubmissions ProgrammingSubmission[]
+  purchases              Purchase[]
 
   @@index([role, status])
   @@map("profiles")
+}
+
+// Auditable purchase history, kept separate from Profile.hasLifetimeAccess
+// so there's a real record of how/when access was granted — either an admin
+// using grantLifetimeAccess() (provider: "manual") or a real Razorpay
+// payment (provider: "razorpay", providerReference: the Razorpay payment id).
+model Purchase {
+  id                Int      @id @default(autoincrement())
+  studentId         String
+  profile           Profile  @relation(fields: [studentId], references: [id])
+  provider          String   @default("manual")
+  providerReference String?
+  // Smallest currency unit (paise for INR) — null for manual grants, which
+  // have no real transaction amount.
+  amount            Int?
+  currency          String   @default("INR")
+  status            String   @default("completed")
+  createdAt         DateTime @default(now())
+
+  // A real payment can legitimately be recorded twice — once via the
+  // client-side checkout success callback, once via the Razorpay webhook
+  // (defense in depth, since the webhook is the source of truth if the
+  // browser closes before the callback fires). This constraint makes that
+  // safe: the second attempt hits a unique-constraint error instead of
+  // creating a duplicate row (see recordPurchaseAndGrantAccess in
+  // lib/payments/access.ts). Safe against existing manual-grant rows —
+  // Postgres treats multiple NULL providerReferences as distinct.
+  @@unique([provider, providerReference])
+  @@index([studentId])
+  @@map("purchases")
+}
+
+// Singleton row (id is always 1) — the live admin-editable payments switch.
+// A new concept for this codebase; kept to exactly the two fields actually
+// needed rather than a general key-value settings table, since nothing else
+// requires one yet.
+model PlatformSettings {
+  id                   Int      @id @default(1)
+  paymentsEnabled      Boolean  @default(false)
+  // Rupees, not paise — converted to paise only when creating a Razorpay
+  // order, so this stays human-readable in the admin UI and DB.
+  subscriptionPriceInr Int      @default(0)
+  updatedAt            DateTime @updatedAt
+
+  @@map("platform_settings")
+}
+
+model ProgrammingSubmission {
+  id              Int                @id @default(autoincrement())
+  studentId       String
+  studentEmail    String
+  problemId       Int
+  // Restrict, not Cascade — see the identical comment on SqlSubmission.problem.
+  problem         ProgrammingProblem @relation(fields: [problemId], references: [id], onDelete: Restrict)
+  problemTitle    String
+  language        String
+  code            String
+  verdict         String
+  executionTimeMs Int
+  memoryKb        Int
+  passedTests     Int
+  totalTests      Int
+  submittedAt     DateTime           @default(now())
+  profile         Profile            @relation(fields: [studentId], references: [id])
+
+  @@index([studentId])
+  @@index([problemId])
+  @@map("programming_submissions")
+}
+
+// Short-lived lock preventing a student from grading the same problem twice
+// concurrently (multi-tab / rapid double-submit). Acquired right before
+// grading starts and released right after — rows should never persist beyond
+// a single request's lifetime except in a crash, which the stale-lock check
+// in submit-code.ts reclaims after 30s.
+model ProgrammingSubmissionLock {
+  studentId String
+  problemId Int
+  createdAt DateTime @default(now())
+
+  @@id([studentId, problemId])
+  @@map("programming_submission_locks")
+}
+
+// Mirrors ProgrammingSubmissionLock exactly, for the SQL judge.
+model SqlSubmissionLock {
+  studentId String
+  problemId Int
+  createdAt DateTime @default(now())
+
+  @@id([studentId, problemId])
+  @@map("sql_submission_locks")
 }

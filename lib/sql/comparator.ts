@@ -36,7 +36,8 @@ function rowSortKey(row: string[]): string {
 // ---------------------------------------------------------------------------
 
 export function compareSqlResults(input: ComparisonInput): ComparisonResult {
-  let { studentColumns, studentRows, expectedColumns, expectedRows } = input;
+  const { expectedColumns } = input;
+  let { studentColumns, studentRows, expectedRows } = input;
 
   // Normalize all cells on both sides upfront.
   studentRows = studentRows.map(normalizeRow);

@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { getSqlProblemById } from "@/lib/actions/sql-problems";
 import { SqlSolveView } from "@/components/SqlSolveView";
+import { BuySubscriptionPrompt } from "@/components/BuySubscriptionPrompt";
+import { getAuthUser } from "@/lib/auth/get-user";
+import { hasLifetimeAccess } from "@/lib/payments/access";
 
 export default async function SolveSqlProblemPage({
   params,
@@ -39,6 +42,17 @@ export default async function SolveSqlProblemPage({
     );
   }
 
-  // Strip the reference solution before sending to the client — students must not see it.
-  return <SqlSolveView problem={{ ...problem, solutionQuery: null }} backHref="/sql" backLabel="Back to SQL" />;
+  // Premium gate — see the identical comment in app/solve/[id]/page.tsx.
+  const user = await getAuthUser();
+  const role = user?.app_metadata?.role;
+  const isAdmin = role === "admin";
+  if (problem.accessType === "PREMIUM" && !isAdmin && !(user && (await hasLifetimeAccess(user.id)))) {
+    return <BuySubscriptionPrompt backHref="/sql" backLabel="Back to SQL" />;
+  }
+
+  // Strip the reference solution and hidden grading datasets before sending
+  // to the client — students must not see either. Submission grading now
+  // re-fetches this data server-side (see submitSqlAction), so the client
+  // never needs it.
+  return <SqlSolveView problem={{ ...problem, solutionQuery: null, hiddenDatasets: [] }} backHref="/sql" backLabel="Back to SQL" />;
 }

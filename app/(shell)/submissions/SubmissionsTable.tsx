@@ -1,17 +1,38 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { SqlSubmissionRecord } from "@/lib/actions/sql-submissions";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { StatusBadge, DifficultyLabel } from "@/components/ui/Badge";
 import { Pagination } from "@/components/ui/Pagination";
+import type { SubmissionStatus } from "@/lib/types";
 
 const PAGE_SIZE = 10;
-type VerdictFilter = "All Status" | "Accepted" | "Wrong Answer" | "Error";
-const STATUS_OPTIONS: VerdictFilter[] = ["All Status", "Accepted", "Wrong Answer", "Error"];
+type VerdictFilter = "All Status" | SubmissionStatus;
+const STATUS_OPTIONS: VerdictFilter[] = [
+  "All Status",
+  "Accepted",
+  "Wrong Answer",
+  "Compilation Error",
+  "Runtime Error",
+  "Time Limit Exceeded",
+  "Memory Limit Exceeded",
+  "Error",
+];
+
+export interface UnifiedSubmission {
+  key: string;
+  language: string;
+  problemTitle: string;
+  problemDifficulty: string;
+  verdict: string;
+  executionTimeMs: number;
+  passed: number;
+  total: number;
+  submittedAt: Date;
+}
 
 interface Props {
-  submissions: SqlSubmissionRecord[];
+  submissions: UnifiedSubmission[];
 }
 
 export function SubmissionsTable({ submissions }: Props) {
@@ -50,6 +71,7 @@ export function SubmissionsTable({ submissions }: Props) {
           <thead className="bg-surface-container-low/50 text-xs font-semibold text-on-surface-variant uppercase tracking-wider">
             <tr>
               <th className="px-6 py-4">Problem</th>
+              <th className="px-6 py-4">Language</th>
               <th className="px-6 py-4">Difficulty</th>
               <th className="px-6 py-4">Status</th>
               <th className="px-6 py-4">Test Cases</th>
@@ -59,17 +81,18 @@ export function SubmissionsTable({ submissions }: Props) {
           </thead>
           <tbody className="divide-y divide-outline-variant/10 text-sm">
             {pageItems.map((s) => (
-              <tr key={s.id} className="hover:bg-surface-container-low/40 transition-colors">
+              <tr key={s.key} className="hover:bg-surface-container-low/40 transition-colors">
                 <td className="px-6 py-4 font-bold text-on-surface">{s.problemTitle}</td>
+                <td className="px-6 py-4 text-on-surface-variant">{s.language}</td>
                 <td className="px-6 py-4">
                   {s.problemDifficulty
                     ? <DifficultyLabel difficulty={s.problemDifficulty as "Easy" | "Medium" | "Hard"} />
                     : <span className="text-on-surface-variant">—</span>}
                 </td>
                 <td className="px-6 py-4">
-                  <StatusBadge status={s.verdict as "Accepted" | "Wrong Answer" | "Error"} />
+                  <StatusBadge status={s.verdict as SubmissionStatus} />
                 </td>
-                <td className="px-6 py-4 text-on-surface-variant">{s.passedDatasets} / {s.totalDatasets}</td>
+                <td className="px-6 py-4 text-on-surface-variant">{s.passed} / {s.total}</td>
                 <td className="px-6 py-4 text-on-surface-variant">{s.executionTimeMs} ms</td>
                 <td className="px-6 py-4 text-on-surface-variant">
                   {new Date(s.submittedAt).toLocaleString("en-US", {
@@ -81,8 +104,8 @@ export function SubmissionsTable({ submissions }: Props) {
             ))}
             {pageItems.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-6 py-10 text-center text-on-surface-variant">
-                  {submissions.length === 0 ? "No SQL submissions yet." : "No submissions match your filters."}
+                <td colSpan={7} className="px-6 py-10 text-center text-on-surface-variant">
+                  {submissions.length === 0 ? "No submissions yet." : "No submissions match your filters."}
                 </td>
               </tr>
             )}

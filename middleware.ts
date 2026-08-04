@@ -1,12 +1,17 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { createServerClient } from "@supabase/ssr";
 import { createMiddlewareClient } from "@/lib/supabase/middleware";
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const { user, response } = await createMiddlewareClient(request);
+  const { user, response, supabase: middlewareSupabase } = await createMiddlewareClient(request);
 
   const isAuthenticated = !!user;
-  const role = user?.user_metadata?.role ?? user?.app_metadata?.role;
+  // app_metadata is only writable via the Supabase service-role API (or the
+  // dashboard) — never trust user_metadata for role, it's end-user-editable
+  // from the browser (supabase.auth.updateUser({ data: { role: "admin" } })
+  // would otherwise let any signed-in student grant themselves admin).
+  const role = user?.app_metadata?.role;
   const isAdmin = isAuthenticated && role === "admin";
 
   // ── Route classification ──────────────────────────────────────────────────
@@ -20,6 +25,10 @@ export async function middleware(request: NextRequest) {
     !pathname.startsWith("/auth/") &&   // /auth/callback and any future auth routes
     pathname !== "/login" &&
     pathname !== "/forgot-password" &&
+    pathname !== "/health" &&           // must stay publicly reachable, no auth
+    pathname !== "/webhooks/razorpay" && // Razorpay's server calls this directly — no session, must stay public
+    pathname !== "/privacy" &&          // linked from the signup form, must be readable pre-account
+    pathname !== "/terms" &&            // same as /privacy
     pathname !== "/";
 
   // ── Already signed in → redirect away from login pages ───────────────────
@@ -54,22 +63,12 @@ export async function middleware(request: NextRequest) {
     // Admins are allowed to browse student routes (for review/QA purposes).
 
     // Block suspended students and students whose profile no longer exists.
-    // Uses the Supabase REST client (anon key + user's session cookie) so no
-    // service-role key is needed, provided the profiles table is readable by
-    // authenticated users (RLS off, or a policy: SELECT where id = auth.uid()).
+    // Reuses the same Supabase client createMiddlewareClient already built
+    // above (anon key + user's session cookie) rather than constructing a
+    // second one from scratch just for this one read — same query, same
+    // enforcement, one fewer client/cookie-handler setup per request.
     if (!isAdmin && user) {
-      const { createServerClient } = await import("@supabase/ssr");
-      const supabase = createServerClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        {
-          cookies: {
-            getAll: () => request.cookies.getAll(),
-            setAll: () => {},
-          },
-        }
-      );
-      const { data: profile } = await supabase
+      const { data: profile } = await middlewareSupabase
         .from("profiles")
         .select("status")
         .eq("id", user.id)

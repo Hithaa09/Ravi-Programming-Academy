@@ -1,15 +1,13 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
-import { createClient } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth/get-user";
+import { logError } from "@/lib/log";
 
-// Internal helper — validates the session and returns role information.
-// Returns null when the request is unauthenticated.
 async function getAuth(): Promise<{ userId: string; email: string; isAdmin: boolean } | null> {
-  const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getAuthUser();
   if (!user) return null;
-  const role = (user.user_metadata?.role ?? user.app_metadata?.role) as string | undefined;
+  const role = user.app_metadata?.role as string | undefined;
   return { userId: user.id, email: user.email ?? "", isAdmin: role === "admin" };
 }
 
@@ -74,7 +72,10 @@ export async function createSqlSubmission(
     });
     return toRecord(row);
   } catch (e) {
-    console.error("createSqlSubmission error:", e);
+    logError("createSqlSubmission error", {
+      userId: data.studentId,
+      context: { error: e instanceof Error ? e.message : String(e) },
+    });
     return null;
   }
 }
@@ -140,10 +141,7 @@ export async function getAllSqlSubmissions(filter?: {
 export async function getMySubmissionsForProblem(
   problemId: number
 ): Promise<SqlSubmissionRecord[]> {
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getAuthUser();
   if (!user) return [];
   return getSqlSubmissionsByStudent(user.id, problemId);
 }

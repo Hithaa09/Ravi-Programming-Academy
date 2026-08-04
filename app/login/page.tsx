@@ -1,11 +1,24 @@
 "use client";
 
-import { useState, FormEvent, useEffect } from "react";
+import { useState, FormEvent, useEffect, Suspense } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signIn, signUp } from "@/lib/auth/actions";
 import { createClient } from "@/lib/supabase/client";
 
+// useSearchParams() (used below to read ?error=... query params) requires a
+// Suspense boundary during static prerendering, or `next build` fails on
+// this page — the fallback is only ever visible for an instant since the
+// page has no server data to actually wait on.
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-primary-container" />}>
+      <LoginPageInner />
+    </Suspense>
+  );
+}
+
+function LoginPageInner() {
   const [tab, setTab] = useState<"login" | "signup">("login");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -15,8 +28,8 @@ export default function LoginPage() {
 
   useEffect(() => {
     const err = searchParams.get("error");
-    if (err === "google_no_account") {
-      setError("No account found for this Google account. Please sign up with email first.");
+    if (err === "google_email_taken") {
+      setError("An account with this email already exists. Please log in with your password instead.");
     } else if (err === "suspended") {
       setError("Your account has been suspended. Please contact your administrator.");
     } else if (err === "no_profile") {
@@ -84,6 +97,14 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-primary-container p-6 md:p-4">
+      <Link
+        href="/admin/login"
+        title="Admin Portal"
+        aria-label="Admin Portal"
+        className="fixed bottom-4 right-4 w-9 h-9 rounded-full bg-primary-container/40 hover:bg-primary-container/70 border border-white/20 flex items-center justify-center text-white/70 hover:text-white transition-colors z-10"
+      >
+        <span className="material-symbols-outlined text-[18px]">admin_panel_settings</span>
+      </Link>
       <div className="w-full max-w-5xl bg-primary-container rounded-2xl overflow-hidden flex flex-col md:flex-row shadow-card">
         <div className="hidden md:flex md:w-1/2 pt-12 pb-12 pl-10 pr-8 flex-col justify-center relative overflow-hidden">
           <span className="font-headline-xl text-[64px] leading-none text-surface-container-lowest tracking-tight">{"{R.}"}</span>
@@ -229,6 +250,12 @@ grow();`}
                 {error && (
                   <p className="font-label-md text-label-md text-error">{error}</p>
                 )}
+                <p className="font-label-sm text-label-sm text-on-surface-variant">
+                  By creating an account, you agree to the{" "}
+                  <Link href="/terms" className="text-secondary hover:underline">Terms of Service</Link>
+                  {" "}and{" "}
+                  <Link href="/privacy" className="text-secondary hover:underline">Privacy Policy</Link>.
+                </p>
                 <button
                   type="submit"
                   disabled={loading}
@@ -254,9 +281,14 @@ grow();`}
             Google
           </button>
           <p className="text-center font-label-sm text-label-sm text-on-surface-variant/60 mt-2">
-            Google sign-in is for existing accounts only. New users must sign up with email.
+            Signing in with Google creates a new account automatically if you don&apos;t already have one.
           </p>
-          <p className="text-center font-label-sm text-label-sm text-on-surface-variant mt-5 md:mt-8">© 2026 Ravi Programming Academy. All rights reserved.</p>
+          <p className="text-center font-label-sm text-label-sm text-on-surface-variant mt-5 md:mt-6">
+            <Link href="/privacy" className="text-secondary hover:underline">Privacy Policy</Link>
+            {" "}·{" "}
+            <Link href="/terms" className="text-secondary hover:underline">Terms of Service</Link>
+          </p>
+          <p className="text-center font-label-sm text-label-sm text-on-surface-variant mt-2">© 2026 Ravi Programming Academy. All rights reserved.</p>
         </div>
       </div>
     </div>

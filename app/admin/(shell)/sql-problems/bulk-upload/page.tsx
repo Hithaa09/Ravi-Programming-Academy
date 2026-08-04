@@ -9,7 +9,9 @@ import type { SqlProblemFormInput } from "@/lib/actions/sql-problems";
 const DIFFICULTIES = ["Easy", "Medium", "Hard"] as const;
 const STATUSES = ["Draft", "Published", "Archived"] as const;
 const AVAILABILITIES = ["Locked", "Available"] as const;
-const DB_ENGINES = ["MySQL", "PostgreSQL", "SQLite"] as const;
+// Queries always execute against SQLite (see lib/sql/sql-worker.cjs) —
+// only the true execution engine is accepted here now.
+const DB_ENGINES = ["SQLite"] as const;
 
 interface ParsedRow {
   rowNumber: number;
@@ -81,12 +83,19 @@ function parseAndValidate(csvText: string): ParsedRow[] {
     const status = rawStatus || "Draft";
     if (rawStatus && !STATUSES.includes(rawStatus as typeof STATUSES[number]))
       errors.push(`status must be one of: ${STATUSES.join(", ")}`);
+    // CSV import never carries hidden datasets (the format has no column for
+    // them — see handleConfirm below, which always sends hiddenDatasets: []).
+    // Publishing without one would let students see their own grading answer
+    // key as the sample Expected Output, so the server rejects it too — this
+    // just surfaces that as a clear per-row reason instead of a silent skip.
+    if (status === "Published")
+      errors.push(`SQL problems can't be published via CSV import (no hidden dataset can be provided this way) — import as Draft, then add a hidden dataset and publish from the Edit page.`);
     const rawAvailability = get("availability");
     const availability = rawAvailability || "Locked";
     if (rawAvailability && !AVAILABILITIES.includes(rawAvailability as typeof AVAILABILITIES[number]))
       errors.push(`availability must be one of: ${AVAILABILITIES.join(", ")}`);
     const rawDbEngine = get("dbEngine");
-    const dbEngine = rawDbEngine || "MySQL";
+    const dbEngine = rawDbEngine || "SQLite";
     if (rawDbEngine && !DB_ENGINES.includes(rawDbEngine as typeof DB_ENGINES[number]))
       errors.push(`dbEngine must be one of: ${DB_ENGINES.join(", ")}`);
     const rawIgnoreRow = get("ignoreRowOrder");
@@ -174,6 +183,9 @@ export default function BulkUploadSqlPage() {
         ignoreColumnOrder: r.ignoreColumnOrder,
         status: r.status,
         availability: r.availability,
+        // CSV import has no column for this yet — every bulk-imported
+        // problem starts FREE; mark it Premium from the Edit page if needed.
+        accessType: "FREE",
       }));
     const res = await bulkCreateSqlProblems(validRows);
     setImportResult(res);
@@ -315,7 +327,8 @@ export default function BulkUploadSqlPage() {
         <div className="font-body-md text-body-md text-on-surface space-y-1">
           <p>Upload a CSV file to bulk-import SQL problems.</p>
           <p><strong>Required:</strong> title, difficulty (Easy / Medium / Hard), category</p>
-          <p><strong>Optional:</strong> description, explanation, schemaSql, sampleDataSql, solutionQuery, dbEngine (MySQL / PostgreSQL / SQLite), ignoreRowOrder (true/false), ignoreColumnOrder (true/false), status (Draft / Published / Archived), availability (Locked / Available)</p>
+          <p><strong>Optional:</strong> description, explanation, schemaSql, sampleDataSql, solutionQuery, dbEngine (SQLite), ignoreRowOrder (true/false), ignoreColumnOrder (true/false), status (Draft / Published / Archived), availability (Locked / Available)</p>
+          <p><strong>Note:</strong> rows with status = Published will be rejected — CSV import can&apos;t include hidden datasets, and publishing without one isn&apos;t allowed. Import as Draft, then add a hidden dataset and publish from the Edit page.</p>
           <p className="pt-0.5">
             <button type="button" onClick={downloadTemplate} className="text-secondary underline font-medium hover:text-secondary/80 transition-colors">
               Download CSV template

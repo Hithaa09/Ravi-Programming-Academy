@@ -54,12 +54,27 @@ interface SqlSolveViewProps {
   banner?: React.ReactNode;
 }
 
+// One draft per problem — SQL has no per-language dimension the way the
+// Programming editor does, so the key is just the problem id.
+function draftKey(problemId: number): string {
+  return `rpa:sql-draft:${problemId}`;
+}
+
+function loadInitialCode(problemId: number): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.localStorage.getItem(draftKey(problemId)) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export function SqlSolveView({ problem, backHref, backLabel, banner }: SqlSolveViewProps) {
   const [leftTab, setLeftTab] = useState<"description" | "solution" | "submissions">("description");
   const [bottomTab, setBottomTab] = useState<"expected" | "output" | "result">("expected");
   const [mySubmissions, setMySubmissions] = useState<SqlSubmissionRecord[] | null>(null);
   const [submissionsLoading, setSubmissionsLoading] = useState(false);
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(() => loadInitialCode(problem.id));
   const [ran, setRan] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [runResult, setRunResult] = useState<SqlRunResult | null>(null);
@@ -90,6 +105,11 @@ export function SqlSolveView({ problem, backHref, backLabel, banner }: SqlSolveV
 
   function handleReset() {
     setCode("");
+    try {
+      window.localStorage.removeItem(draftKey(problem.id));
+    } catch {
+      // localStorage unavailable — reset still applies to in-memory state.
+    }
   }
 
   async function handleRun() {
@@ -98,8 +118,7 @@ export function SqlSolveView({ problem, backHref, backLabel, banner }: SqlSolveV
     setRunResult(null);
     setBottomTab("output");
     const res = await runSqlAction({
-      schemaSql: problem.schemaSql,
-      sampleDataSql: problem.sampleDataSql,
+      problemId: problem.id,
       query: code,
     });
     setRunResult(res);
@@ -113,15 +132,7 @@ export function SqlSolveView({ problem, backHref, backLabel, banner }: SqlSolveV
     setBottomTab("result");
     const res = await submitSqlAction({
       problemId: problem.id,
-      problemTitle: problem.title,
-      schemaSql: problem.schemaSql,
-      sampleDataSql: problem.sampleDataSql,
       query: code,
-      expectedColumns: problem.expectedResultColumns,
-      expectedRows: problem.expectedResultRows,
-      hiddenDatasets: problem.hiddenDatasets,
-      ignoreRowOrder: problem.ignoreRowOrder,
-      ignoreColumnOrder: problem.ignoreColumnOrder,
     });
     setResult({
       submittedOn: new Date().toLocaleString("en-US", { month: "short", day: "2-digit", year: "numeric", hour: "numeric", minute: "2-digit" }),
@@ -181,7 +192,7 @@ export function SqlSolveView({ problem, backHref, backLabel, banner }: SqlSolveV
                     </div>
                     <div className="flex items-center gap-1.5">
                       <span className="material-symbols-outlined text-[16px]">storage</span>
-                      <span>{problem.dbEngine}</span>
+                      <span>SQLite</span>
                     </div>
                   </div>
                 </div>
@@ -263,7 +274,7 @@ export function SqlSolveView({ problem, backHref, backLabel, banner }: SqlSolveV
           <div className="flex-1 flex flex-col bg-surface-container-lowest border border-surface-container-high rounded-lg shadow-sm overflow-hidden min-h-[300px]">
             <div className="h-12 flex items-center justify-between px-3 border-b border-surface-container-high bg-surface-container-lowest shrink-0">
               <span className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-surface-container-high font-label-md text-label-md text-on-surface bg-surface-container-low">
-                {problem.dbEngine}
+                SQLite
               </span>
               <div className="flex items-center gap-1.5 lg:gap-2">
                 <button onClick={handleReset} className="flex items-center gap-1.5 px-2 lg:px-3 py-1.5 text-on-surface hover:bg-surface-container-low rounded-md transition-colors border border-surface-container-high font-label-md text-label-md">
@@ -289,7 +300,15 @@ export function SqlSolveView({ problem, backHref, backLabel, banner }: SqlSolveV
                 theme="vs-dark"
                 language="sql"
                 value={code}
-                onChange={(v) => setCode(v ?? "")}
+                onChange={(v) => {
+                  const next = v ?? "";
+                  setCode(next);
+                  try {
+                    window.localStorage.setItem(draftKey(problem.id), next);
+                  } catch {
+                    // localStorage unavailable — code still works, just isn't persisted.
+                  }
+                }}
                 options={{ minimap: { enabled: false }, fontSize: 14, fontFamily: "Menlo, Consolas, 'Courier New', monospace", scrollBeyondLastLine: false }}
               />
             </div>
@@ -380,7 +399,7 @@ export function SqlSolveView({ problem, backHref, backLabel, banner }: SqlSolveV
                         <h3 className="font-headline-md text-[14px] text-on-surface mb-3 border-b border-surface-container-high pb-2">Submit Info</h3>
                         <div className="space-y-3 font-label-md text-[13px]">
                           <div className="flex justify-between"><span className="text-on-surface-variant">Submitted On</span><span className="text-on-surface">{result.submittedOn}</span></div>
-                          <div className="flex justify-between"><span className="text-on-surface-variant">Database</span><span className="text-on-surface">{problem.dbEngine}</span></div>
+                          <div className="flex justify-between"><span className="text-on-surface-variant">Database</span><span className="text-on-surface">SQLite</span></div>
                         </div>
                       </div>
                     </>

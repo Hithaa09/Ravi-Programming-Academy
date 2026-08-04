@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getProblemById } from "@/lib/actions/programming-problems";
 import { ProblemSolveView } from "@/components/ProblemSolveView";
 import { AdminPreviewBanner } from "@/components/AdminPreviewBanner";
+import { getWrapperAdapter, FUNCTION_ONLY_LANGUAGES } from "@/lib/wrappers";
 
 export default async function AdminProblemPreviewPage({
   params,
@@ -30,9 +31,18 @@ export default async function AdminProblemPreviewPage({
     );
   }
 
+  const functionStub: Record<string, string> = {};
+  if (problem.executionStyle === "FUNCTION_ONLY" && problem.functionSignature) {
+    for (const langId of FUNCTION_ONLY_LANGUAGES) {
+      const adapter = getWrapperAdapter(langId);
+      if (adapter) functionStub[langId] = adapter.renderFunctionStub(problem.functionSignature);
+    }
+  }
+
   return (
     <ProblemSolveView
       problem={problem}
+      functionStub={functionStub}
       backHref="/admin/programming-problems"
       backLabel="Back to Programming Problems"
       banner={<AdminPreviewBanner />}

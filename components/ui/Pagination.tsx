@@ -26,15 +26,21 @@ function getPageList(current: number, totalPages: number): (number | "ellipsis")
 
 export function Pagination({ page, pageSize, total, onPageChange, itemLabel = "items" }: PaginationProps) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
-  const end = Math.min(page * pageSize, total);
+  // Clamp for display/navigation so an out-of-range `page` (e.g. from a
+  // stale URL param after a filter shrinks the result set) never produces a
+  // nonsensical "Showing 51 to 20 of 20" label or a stuck next/prev button.
+  const displayPage = Math.min(Math.max(page, 1), totalPages);
+  const start = total === 0 ? 0 : (displayPage - 1) * pageSize + 1;
+  const end = Math.min(displayPage * pageSize, total);
 
-  const pageBtn = (label: React.ReactNode, target: number, disabled: boolean, active = false) => (
+  const pageBtn = (label: React.ReactNode, target: number, disabled: boolean, active = false, ariaLabel?: string) => (
     <button
       type="button"
       key={typeof label === "string" ? label : target}
       disabled={disabled}
       onClick={() => onPageChange(target)}
+      aria-label={ariaLabel}
+      title={ariaLabel}
       className={clsx(
         "w-8 h-8 flex items-center justify-center rounded border font-label-md text-label-md transition-colors",
         active ? "bg-primary-container text-white border-primary-container" : "bg-white border-outline-variant/30 text-on-surface hover:bg-surface-container-highest",
@@ -51,15 +57,15 @@ export function Pagination({ page, pageSize, total, onPageChange, itemLabel = "i
         Showing {start} to {end} of {total} {itemLabel}
       </span>
       <div className="flex items-center gap-1.5">
-        {pageBtn(<span className="material-symbols-outlined text-[18px]">chevron_left</span>, page - 1, page === 1)}
-        {getPageList(page, totalPages).map((p, i) =>
+        {pageBtn(<span className="material-symbols-outlined text-[18px]">chevron_left</span>, displayPage - 1, displayPage === 1, false, "Previous page")}
+        {getPageList(displayPage, totalPages).map((p, i) =>
           p === "ellipsis" ? (
             <span key={`e-${i}`} className="w-8 h-8 flex items-center justify-center text-on-surface-variant font-label-md text-label-md">…</span>
           ) : (
-            pageBtn(p, p, false, p === page)
+            pageBtn(p, p, false, p === displayPage)
           )
         )}
-        {pageBtn(<span className="material-symbols-outlined text-[18px]">chevron_right</span>, page + 1, page === totalPages)}
+        {pageBtn(<span className="material-symbols-outlined text-[18px]">chevron_right</span>, displayPage + 1, displayPage === totalPages, false, "Next page")}
       </div>
     </div>
   );

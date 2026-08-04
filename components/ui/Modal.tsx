@@ -16,7 +16,7 @@ export function Modal({ title, onClose, children, maxWidth = "max-w-lg" }: Modal
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-outline-variant/20 sticky top-0 bg-surface-container-lowest">
           <h2 className="font-headline-md text-headline-md text-on-surface">{title}</h2>
-          <button type="button" onClick={onClose} className="text-on-surface-variant hover:text-on-surface transition-colors">
+          <button type="button" onClick={onClose} aria-label="Close" title="Close" className="text-on-surface-variant hover:text-on-surface transition-colors">
             <span className="material-symbols-outlined">close</span>
           </button>
         </div>

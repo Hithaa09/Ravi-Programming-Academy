@@ -34,12 +34,33 @@ export function validateStudentQuery(query: string): { valid: true } | { valid: 
     }
   }
 
+  // \bPRAGMA\b alone misses SQLite's pragma table-valued functions, e.g.
+  // "SELECT * FROM pragma_table_info('x')" — the underscore means there's no
+  // word boundary between PRAGMA and TABLE_INFO, so the check above never
+  // fires. Catch the function-call form explicitly.
+  if (/\bPRAGMA_[A-Z_]*\s*\(/.test(upper)) {
+    return {
+      valid: false,
+      error: `Only read-only SELECT queries are allowed. Pragma functions are not permitted.`,
+    };
+  }
+
   // First real token must be SELECT or WITH (CTEs).
   const firstToken = upper.trim().match(/^([A-Z]+)/)?.[1];
   if (firstToken !== "SELECT" && firstToken !== "WITH") {
     return {
       valid: false,
       error: `Only SELECT queries are allowed. Queries starting with "${firstToken ?? "(empty)"}" are not permitted.`,
+    };
+  }
+
+  // Recursive CTEs have no row/step limit enforced anywhere downstream and
+  // can hang the process (e.g. an unbounded WITH RECURSIVE self-join) —
+  // block them at the door rather than let one query stall the whole server.
+  if (firstToken === "WITH" && /^WITH\s+RECURSIVE\b/.test(upper.trim())) {
+    return {
+      valid: false,
+      error: `Recursive CTEs ("WITH RECURSIVE") are not permitted.`,
     };
   }
 

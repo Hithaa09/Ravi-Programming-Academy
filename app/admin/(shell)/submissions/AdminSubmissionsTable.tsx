@@ -2,14 +2,23 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { SqlSubmissionRecord } from "@/lib/actions/sql-submissions";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { StatusBadge } from "@/components/ui/Badge";
 import { Pagination } from "@/components/ui/Pagination";
+import type { SubmissionStatus } from "@/lib/types";
 
 const PAGE_SIZE = 10;
-type VerdictFilter = "All Verdicts" | "Accepted" | "Wrong Answer" | "Error";
-const VERDICT_OPTIONS: VerdictFilter[] = ["All Verdicts", "Accepted", "Wrong Answer", "Error"];
+type VerdictFilter = "All Verdicts" | SubmissionStatus;
+const VERDICT_OPTIONS: VerdictFilter[] = [
+  "All Verdicts",
+  "Accepted",
+  "Wrong Answer",
+  "Compilation Error",
+  "Runtime Error",
+  "Time Limit Exceeded",
+  "Memory Limit Exceeded",
+  "Error",
+];
 
 interface Stats {
   total: number;
@@ -21,8 +30,21 @@ interface Stats {
   errorsPct: number;
 }
 
+export interface UnifiedAdminSubmission {
+  id: number;
+  type: "sql" | "programming";
+  language: string;
+  studentEmail: string;
+  problemTitle: string;
+  verdict: string;
+  executionTimeMs: number;
+  passed: number;
+  total: number;
+  submittedAt: Date;
+}
+
 interface Props {
-  submissions: SqlSubmissionRecord[];
+  submissions: UnifiedAdminSubmission[];
   stats: Stats;
 }
 
@@ -48,30 +70,28 @@ export function AdminSubmissionsTable({ submissions, stats }: Props) {
 
   const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  function verdictToStatus(v: string): "Accepted" | "Wrong Answer" | "Error" {
-    if (v === "Accepted") return "Accepted";
-    if (v === "Wrong Answer") return "Wrong Answer";
-    return "Error";
+  function detailHref(s: UnifiedAdminSubmission): string {
+    return s.type === "sql" ? `/admin/submissions/${s.id}` : `/admin/submissions/programming/${s.id}`;
   }
 
   return (
     <>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 p-6">
-          <p className="font-display-sm text-display-sm text-on-surface">{stats.total.toLocaleString()}</p>
-          <p className="font-body-sm text-body-sm text-on-surface-variant mt-1">Total SQL Submissions</p>
+          <p className="font-headline-lg text-headline-lg text-on-surface">{stats.total.toLocaleString()}</p>
+          <p className="font-label-sm text-label-sm text-on-surface-variant mt-1">Total Submissions</p>
         </div>
         <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 p-6">
-          <p className="font-display-sm text-display-sm text-on-surface">{stats.accepted} ({stats.acceptedPct}%)</p>
-          <p className="font-body-sm text-body-sm text-on-surface-variant mt-1">Accepted</p>
+          <p className="font-headline-lg text-headline-lg text-on-surface">{stats.accepted} ({stats.acceptedPct}%)</p>
+          <p className="font-label-sm text-label-sm text-on-surface-variant mt-1">Accepted</p>
         </div>
         <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 p-6">
-          <p className="font-display-sm text-display-sm text-on-surface">{stats.wrongAnswer} ({stats.wrongAnswerPct}%)</p>
-          <p className="font-body-sm text-body-sm text-on-surface-variant mt-1">Wrong Answer</p>
+          <p className="font-headline-lg text-headline-lg text-on-surface">{stats.wrongAnswer} ({stats.wrongAnswerPct}%)</p>
+          <p className="font-label-sm text-label-sm text-on-surface-variant mt-1">Wrong Answer</p>
         </div>
         <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 p-6">
-          <p className="font-display-sm text-display-sm text-on-surface">{stats.errors} ({stats.errorsPct}%)</p>
-          <p className="font-body-sm text-body-sm text-on-surface-variant mt-1">Errors</p>
+          <p className="font-headline-lg text-headline-lg text-on-surface">{stats.errors} ({stats.errorsPct}%)</p>
+          <p className="font-label-sm text-label-sm text-on-surface-variant mt-1">Errors</p>
         </div>
       </div>
 
@@ -99,6 +119,7 @@ export function AdminSubmissionsTable({ submissions, stats }: Props) {
                 <th className="px-6 py-4">#</th>
                 <th className="px-6 py-4">Student</th>
                 <th className="px-6 py-4">Problem</th>
+                <th className="px-6 py-4">Language</th>
                 <th className="px-6 py-4">Verdict</th>
                 <th className="px-6 py-4">Test Cases</th>
                 <th className="px-6 py-4">Exec Time</th>
@@ -108,15 +129,16 @@ export function AdminSubmissionsTable({ submissions, stats }: Props) {
             <tbody className="divide-y divide-outline-variant/10 text-sm">
               {pageItems.map((s, i) => (
                 <tr
-                  key={s.id}
+                  key={`${s.type}-${s.id}`}
                   className="hover:bg-surface-container-low/40 transition-colors cursor-pointer"
-                  onClick={() => router.push(`/admin/submissions/${s.id}`)}
+                  onClick={() => router.push(detailHref(s))}
                 >
                   <td className="px-6 py-4 text-on-surface-variant">{(page - 1) * PAGE_SIZE + i + 1}</td>
                   <td className="px-6 py-4 font-medium text-on-surface">{s.studentEmail}</td>
                   <td className="px-6 py-4 text-on-surface">{s.problemTitle}</td>
-                  <td className="px-6 py-4"><StatusBadge status={verdictToStatus(s.verdict)} /></td>
-                  <td className="px-6 py-4 text-on-surface-variant">{s.passedDatasets} / {s.totalDatasets}</td>
+                  <td className="px-6 py-4 text-on-surface-variant">{s.language}</td>
+                  <td className="px-6 py-4"><StatusBadge status={s.verdict as SubmissionStatus} /></td>
+                  <td className="px-6 py-4 text-on-surface-variant">{s.passed} / {s.total}</td>
                   <td className="px-6 py-4 text-on-surface-variant">{s.executionTimeMs} ms</td>
                   <td className="px-6 py-4 text-on-surface-variant">
                     {new Date(s.submittedAt).toLocaleString("en-US", {
@@ -128,8 +150,8 @@ export function AdminSubmissionsTable({ submissions, stats }: Props) {
               ))}
               {pageItems.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-6 py-10 text-center text-on-surface-variant">
-                    {submissions.length === 0 ? "No SQL submissions yet." : "No submissions match your filters."}
+                  <td colSpan={8} className="px-6 py-10 text-center text-on-surface-variant">
+                    {submissions.length === 0 ? "No submissions yet." : "No submissions match your filters."}
                   </td>
                 </tr>
               )}

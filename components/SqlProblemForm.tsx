@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { DbEngine, SqlHiddenDataset, QuestionStatus, QuestionAvailability } from "@/lib/types";
+import type { DbEngine, SqlHiddenDataset, QuestionStatus, QuestionAvailability, AccessType } from "@/lib/types";
 import type { SqlProblemRecord } from "@/lib/actions/sql-problems";
 import { createSqlProblem, updateSqlProblem, deleteSqlProblem } from "@/lib/actions/sql-problems";
 import { Button } from "@/components/ui/Button";
@@ -10,9 +10,14 @@ import { Modal } from "@/components/ui/Modal";
 import type { Difficulty } from "@/lib/types";
 
 const DIFFICULTIES: Difficulty[] = ["Easy", "Medium", "Hard"];
-const DB_ENGINES: DbEngine[] = ["MySQL", "PostgreSQL", "SQLite"];
+// Queries are always executed against SQLite (see lib/sql/sql-worker.cjs) —
+// MySQL/PostgreSQL were previously offered here but never actually reflected
+// what graded a submission, which could mislead instructors authoring
+// dialect-specific SQL. Only the true execution engine is offered now.
+const DB_ENGINES: DbEngine[] = ["SQLite"];
 const QUESTION_STATUSES: QuestionStatus[] = ["Draft", "Published", "Archived"];
 const QUESTION_AVAILABILITIES: QuestionAvailability[] = ["Locked", "Available"];
+const ACCESS_TYPES: AccessType[] = ["FREE", "PREMIUM"];
 
 type EntryMethod = "manual" | "import";
 
@@ -338,6 +343,7 @@ export function SqlProblemForm({ mode, backHref, cancelHref, initial }: SqlProbl
   const [difficulty, setDifficulty] = useState<Difficulty>(initial?.difficulty ?? "Easy");
   const [status, setStatus] = useState<QuestionStatus>(initial?.status ?? "Draft");
   const [availability, setAvailability] = useState<QuestionAvailability>(initial?.availability ?? "Locked");
+  const [accessType, setAccessType] = useState<AccessType>(initial?.accessType ?? "FREE");
   const [topic, setTopic] = useState(initial?.category ?? "");
   const [statement, setStatement] = useState(initial?.description ?? "");
   const [explanation, setExplanation] = useState(initial?.explanation ?? "");
@@ -357,10 +363,22 @@ export function SqlProblemForm({ mode, backHref, cancelHref, initial }: SqlProbl
   const [hiddenDatasets, setHiddenDatasets] = useState<SqlHiddenDataset[]>(
     initial?.hiddenDatasets ?? []
   );
+  // Mirrors the server-side check in validateSqlProblemInput (sql-problems.ts):
+  // a dataset only counts if every field grading actually depends on
+  // (dataSql, expectedColumns, expectedRows) has real, non-blank content —
+  // the blank placeholder "Add Hidden Dataset" seeds doesn't satisfy this.
+  const hasMeaningfulHiddenDataset = hiddenDatasets.some(
+    (d) =>
+      !!d.dataSql?.trim() &&
+      d.expectedColumns.some((c) => c.trim() !== "") &&
+      d.expectedRows.some((row) => row.some((cell) => cell.trim() !== ""))
+  );
 
   const [solutionQuery, setSolutionQuery] = useState(initial?.solutionQuery ?? "");
 
-  const [dbEngine, setDbEngine] = useState<DbEngine>(initial?.dbEngine ?? "MySQL");
+  // Always SQLite regardless of what an existing problem has stored (see
+  // DB_ENGINES above) — saving naturally corrects any old "MySQL"/"PostgreSQL" value.
+  const [dbEngine, setDbEngine] = useState<DbEngine>("SQLite");
   const [ignoreRowOrder, setIgnoreRowOrder] = useState(initial?.ignoreRowOrder ?? false);
   const [ignoreColumnOrder, setIgnoreColumnOrder] = useState(initial?.ignoreColumnOrder ?? false);
 
@@ -395,6 +413,7 @@ export function SqlProblemForm({ mode, backHref, cancelHref, initial }: SqlProbl
       ignoreColumnOrder,
       status,
       availability,
+      accessType,
     };
 
     let result;
@@ -489,7 +508,7 @@ export function SqlProblemForm({ mode, backHref, cancelHref, initial }: SqlProbl
             />
           </div>
 
-          <div className={`grid grid-cols-1 gap-6 ${status === "Published" ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
+          <div className={`grid grid-cols-1 gap-6 ${status === "Published" ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}>
             <div>
               <label className="font-label-md text-label-md font-bold text-on-surface block mb-2">
                 Difficulty <span className="text-error">*</span>
@@ -503,7 +522,19 @@ export function SqlProblemForm({ mode, backHref, cancelHref, initial }: SqlProbl
                 Status <span className="text-error">*</span>
               </label>
               <select value={status} onChange={(e) => setStatus(e.target.value as QuestionStatus)} className={fieldClass()}>
-                {QUESTION_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                {QUESTION_STATUSES.map((s) => (
+                  <option key={s} value={s} disabled={s === "Published" && !hasMeaningfulHiddenDataset}>
+                    {s === "Published" && !hasMeaningfulHiddenDataset ? "Published (add a hidden dataset first)" : s}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="font-label-md text-label-md font-bold text-on-surface block mb-2">
+                Access Type <span className="text-error">*</span>
+              </label>
+              <select value={accessType} onChange={(e) => setAccessType(e.target.value as AccessType)} className={fieldClass()}>
+                {ACCESS_TYPES.map((a) => <option key={a} value={a}>{a}</option>)}
               </select>
             </div>
             {status === "Published" && (
@@ -577,6 +608,17 @@ export function SqlProblemForm({ mode, backHref, cancelHref, initial }: SqlProbl
 
           <div className="pt-4 border-t border-outline-variant/20">
             <HiddenDatasetEditor datasets={hiddenDatasets} onChange={setHiddenDatasets} />
+            {!hasMeaningfulHiddenDataset && (
+              <div className="mt-4 flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-amber-800 font-body-md text-body-md">
+                <span className="material-symbols-outlined text-[18px] shrink-0">warning</span>
+                <span>
+                  This problem can&apos;t be published yet. Every hidden dataset needs real seed data and a real
+                  expected output filled in — a blank dataset doesn&apos;t count. Without one, grading would fall
+                  back to the sample Expected Output above — which students can already see — letting them hardcode the
+                  answer instead of solving the problem. Add at least one hidden dataset to enable publishing.
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="pt-4 border-t border-outline-variant/20">

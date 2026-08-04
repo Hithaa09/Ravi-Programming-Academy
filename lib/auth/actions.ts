@@ -2,6 +2,8 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { validateNewPassword } from "@/lib/password-policy";
 
 export interface AuthResult {
   error: string | null;
@@ -13,6 +15,11 @@ export async function signUp(
   password: string,
   fullName: string
 ): Promise<AuthResult> {
+  const signupLimit = checkRateLimit("signup", getClientIp());
+  if (!signupLimit.allowed) {
+    return { error: "Too many signup attempts from this network. Please wait a while and try again." };
+  }
+
   const supabase = createClient();
 
   const { data, error } = await supabase.auth.signUp({
@@ -53,13 +60,18 @@ export async function signIn(
   email: string,
   password: string
 ): Promise<AuthResult> {
+  const loginLimit = checkRateLimit("login", getClientIp());
+  if (!loginLimit.allowed) {
+    return { error: "Too many login attempts from this network. Please wait a while and try again." };
+  }
+
   const supabase = createClient();
 
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
   if (error) return { error: error.message };
 
-  const role = data.user?.user_metadata?.role ?? data.user?.app_metadata?.role;
+  const role = data.user?.app_metadata?.role;
 
   if (role === "admin") {
     await supabase.auth.signOut();
@@ -90,6 +102,13 @@ export async function adminSignIn(
   email: string,
   password: string
 ): Promise<AuthResult> {
+  // Same "login" bucket as the student signIn() above, intentionally — see
+  // the comment on RATE_LIMITS.login in lib/rate-limit.ts.
+  const loginLimit = checkRateLimit("login", getClientIp());
+  if (!loginLimit.allowed) {
+    return { error: "Too many login attempts from this network. Please wait a while and try again." };
+  }
+
   const supabase = createClient();
 
   const { data, error } = await supabase.auth.signInWithPassword({
@@ -99,10 +118,10 @@ export async function adminSignIn(
 
   if (error) return { error: error.message };
 
-  // Role is stored in user_metadata (set via Supabase dashboard) or
-  // app_metadata (set via service-role API). Check both.
-  const role =
-    data.user?.user_metadata?.role ?? data.user?.app_metadata?.role;
+  // Role lives only in app_metadata, set via the Supabase dashboard or the
+  // service-role API — user_metadata is never trusted for this, since a
+  // signed-in user can edit it themselves (supabase.auth.updateUser).
+  const role = data.user?.app_metadata?.role;
 
   if (role !== "admin") {
     await supabase.auth.signOut();
@@ -132,6 +151,11 @@ export async function adminSignIn(
 }
 
 export async function resetPasswordEmail(email: string): Promise<AuthResult> {
+  const resetLimit = checkRateLimit("passwordReset", getClientIp());
+  if (!resetLimit.allowed) {
+    return { error: "Too many password reset requests from this network. Please wait a while and try again." };
+  }
+
   const supabase = createClient();
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "";
@@ -144,6 +168,9 @@ export async function resetPasswordEmail(email: string): Promise<AuthResult> {
 }
 
 export async function updatePassword(password: string): Promise<AuthResult> {
+  const validationError = validateNewPassword(password);
+  if (validationError) return { error: validationError };
+
   const supabase = createClient();
 
   const { error } = await supabase.auth.updateUser({ password });
