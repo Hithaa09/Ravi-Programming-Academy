@@ -1,15 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Editor } from "@monaco-editor/react";
-import type { ProgrammingProblemRecord } from "@/lib/actions/programming-problems";
+import { getOfficialSolutionIfUnlocked, type ProgrammingProblemRecord } from "@/lib/actions/programming-problems";
 import type { TestCase } from "@/lib/types";
 import { CODE_LANGUAGES as ALL_LANGUAGES, DEFAULT_BOILERPLATE } from "@/lib/languages";
-import { FUNCTION_ONLY_LANGUAGES, encodeArgsAsStdin, type FunctionTestCase } from "@/lib/wrappers";
+import { FUNCTION_ONLY_LANGUAGES, encodeArgsAsStdin, resultsMatch, coerceInputValue, type FunctionTestCase } from "@/lib/wrappers";
+import { outputsMatch } from "@/lib/output-compare";
 import { MobileSolveNotice } from "@/components/MobileSolveNotice";
 import { runProgrammingCode, type ProgrammingRunResult } from "@/lib/actions/run-code";
 import { submitProgrammingCode, type ProgrammingSubmitResult } from "@/lib/actions/submit-code";
+import { getMyBestAcceptedSubmission, type BestSubmissionStats } from "@/lib/actions/programming-submissions";
 import { resolveExecutionLimits } from "@/lib/execution-limits";
 
 interface ProblemSolveViewProps {
@@ -62,10 +64,19 @@ export function ProblemSolveView({ problem, functionStub, backHref, backLabel, b
     [isFunctionOnly]
   );
   const [leftTab, setLeftTab] = useState<"description" | "solutions" | "submissions">("description");
+  const [officialSolution, setOfficialSolution] = useState<{ unlocked: boolean; solutions: Record<string, string> } | null>(null);
+  const [solutionLoading, setSolutionLoading] = useState(false);
   const [bottomTab, setBottomTab] = useState<"testcases" | "output" | "result">("testcases");
   const [language, setLanguage] = useState<string>(isFunctionOnly ? LANGUAGES[0]?.id ?? "python" : "python");
   const [code, setCode] = useState<Record<string, string>>(() => loadInitialCode(problem, LANGUAGES, functionStub));
+  // -1 is a sentinel meaning "Custom Input" is selected, rather than one of
+  // the problem's own visible cases — visibleCases[-1] is undefined, which
+  // caseVerdict() below already treats as "not comparable" for free, so
+  // custom runs naturally get no pass/fail badge without any special-casing.
   const [activeCase, setActiveCase] = useState(0);
+  const [customStdin, setCustomStdin] = useState("");
+  const [customArgInputs, setCustomArgInputs] = useState<string[]>(() => (problem.functionSignature?.params ?? []).map(() => ""));
+  const [customArgErrors, setCustomArgErrors] = useState<(string | null)[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [hasRun, setHasRun] = useState(false);
   // caseIndex is captured at the moment each run happened, so results stay
@@ -76,6 +87,9 @@ export function ProblemSolveView({ problem, functionStub, backHref, backLabel, b
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<ProgrammingSubmitResult | null>(null);
   const [submittedOn, setSubmittedOn] = useState<string | null>(null);
+  // Captured right before this submission, so it reflects prior attempts
+  // only — see getMyBestAcceptedSubmission's own comment on why fetch order matters.
+  const [previousBest, setPreviousBest] = useState<BestSubmissionStats | null>(null);
 
   const currentLang = useMemo(() => LANGUAGES.find((l) => l.id === language)!, [language, LANGUAGES]);
   const executionLimits = useMemo(() => resolveExecutionLimits(problem), [problem]);
@@ -100,8 +114,88 @@ export function ProblemSolveView({ problem, functionStub, backHref, backLabel, b
 
   const visibleCases: (TestCase | FunctionTestCase)[] = isFunctionOnly ? problem.functionTestCases : problem.testCases;
 
+  // Only ever set by the server when grading fell back to visible test
+  // cases (see ProgrammingSubmitResult.failedVisibleCase) — never reveals
+  // anything about hidden cases, since the server itself never populates
+  // this field when grading against them.
+  const failedVisibleCaseDetail = useMemo(() => {
+    const failed = submitResult?.failedVisibleCase;
+    if (!failed) return null;
+    const tc = visibleCases[failed.index];
+    if (!tc) return null;
+    const actualDisplay = isFunctionOnly
+      ? (() => {
+          try {
+            return formatArgForDisplay(JSON.parse(failed.actualOutput));
+          } catch {
+            return failed.actualOutput;
+          }
+        })()
+      : failed.actualOutput;
+    const expectedDisplay = isFunctionOnly ? formatArgForDisplay((tc as FunctionTestCase).expected) : (tc as TestCase).expected;
+    return { index: failed.index, actualDisplay, expectedDisplay };
+  }, [submitResult, visibleCases, isFunctionOnly]);
+
+  // Run never grades server-side (see ProgrammingRunResult.statusLabel's own
+  // comment), but visible cases and their expected output are already
+  // client-side data — comparing here is purely a display convenience, not a
+  // new trust boundary, and mirrors the exact comparator Submit uses
+  // server-side (lib/output-compare.ts / lib/wrappers/wire-format.ts) so the
+  // ✅/❌ shown here never disagrees with what Submit would say.
+  // Returns null when the run didn't complete cleanly — errors already have
+  // their own distinct UI, a pass/fail badge on top would be redundant.
+  function caseVerdict(caseIndex: number, runResult: ProgrammingRunResult): boolean | null {
+    if (!runResult.ok || runResult.compileOutput || runResult.statusLabel) return null;
+    const tc = visibleCases[caseIndex];
+    if (!tc) return null;
+    if (isFunctionOnly) {
+      if (!problem.functionSignature) return null;
+      return resultsMatch(problem.functionSignature.returnType, runResult.stdout ?? "", (tc as FunctionTestCase).expected).match;
+    }
+    return outputsMatch(runResult.stdout ?? "", (tc as TestCase).expected);
+  }
+
+  // Validates+encodes the custom-input fields into stdin. For Function Only,
+  // reuses the exact same text<->value coercion the admin problem form uses
+  // for authoring test cases, so a student typing "1, 2, 3" for an int[]
+  // param follows the same convention they've already seen in the problem's
+  // sample cases. Returns per-field errors instead of throwing, so the UI can
+  // point at exactly which field is wrong.
+  function buildCustomStdin(): { stdin: string } | { errors: (string | null)[] } {
+    if (!isFunctionOnly) return { stdin: customStdin };
+    const params = problem.functionSignature?.params ?? [];
+    const errors: (string | null)[] = [];
+    const values: unknown[] = [];
+    let hasError = false;
+    for (let i = 0; i < params.length; i++) {
+      const { value, error } = coerceInputValue(customArgInputs[i] ?? "", params[i].type);
+      errors.push(error ?? null);
+      if (error) hasError = true;
+      values.push(value);
+    }
+    if (hasError) return { errors };
+    return { stdin: encodeArgsAsStdin(values) };
+  }
+
   async function handleRunCurrent() {
-    if (!visibleCases.length || isRunning) return;
+    if (isRunning) return;
+    if (activeCase === -1) {
+      const built = buildCustomStdin();
+      if ("errors" in built) {
+        setCustomArgErrors(built.errors);
+        return;
+      }
+      setCustomArgErrors([]);
+      setIsRunning(true);
+      setRunResults(null);
+      setBottomTab("output");
+      const result = await runProgrammingCode({ problemId: problem.id, language, code: code[language] ?? "", stdin: built.stdin });
+      setRunResults([{ caseIndex: -1, result }]);
+      setHasRun(true);
+      setIsRunning(false);
+      return;
+    }
+    if (!visibleCases.length) return;
     const caseIndex = activeCase;
     const tc = visibleCases[caseIndex];
     setIsRunning(true);
@@ -138,15 +232,35 @@ export function ProblemSolveView({ problem, functionStub, backHref, backLabel, b
     if (isSubmitting) return;
     setIsSubmitting(true);
     setBottomTab("result");
+    // Fetched before submitting, not after — so it reflects only prior
+    // attempts and never the one about to be created.
+    const bestBefore = await getMyBestAcceptedSubmission(problem.id);
     const res = await submitProgrammingCode({
       problemId: problem.id,
       language,
       code: code[language] ?? "",
     });
     setSubmitResult(res);
+    setPreviousBest(bestBefore);
     setSubmittedOn(new Date().toLocaleString("en-US", { month: "short", day: "2-digit", year: "numeric", hour: "numeric", minute: "2-digit" }));
     setIsSubmitting(false);
   }
+
+  // Lazily fetches the official solution when the Solutions tab is opened —
+  // the server re-checks "has this student ever gotten Accepted" against the
+  // database itself (see getOfficialSolutionIfUnlocked), so this can't be
+  // fooled by client state. Re-runs when submitResult's verdict changes too,
+  // so getting Accepted while already sitting on this tab (or having visited
+  // it earlier in the session while still locked) picks up the unlock
+  // without needing to leave and reopen the tab.
+  useEffect(() => {
+    if (leftTab !== "solutions" || officialSolution?.unlocked) return;
+    setSolutionLoading(true);
+    getOfficialSolutionIfUnlocked(problem.id).then((res) => {
+      setOfficialSolution(res);
+      setSolutionLoading(false);
+    });
+  }, [leftTab, problem.id, submitResult?.verdict, officialSolution?.unlocked]);
 
   return (
     <div className="bg-background text-on-surface font-body-md antialiased">
@@ -241,7 +355,21 @@ export function ProblemSolveView({ problem, functionStub, backHref, backLabel, b
               </>
             )}
             {leftTab === "solutions" && (
-              <p className="font-body-md text-body-md text-on-surface-variant">No community solutions yet — check back later.</p>
+              solutionLoading ? (
+                <p className="font-body-md text-body-md text-on-surface-variant">Loading…</p>
+              ) : !officialSolution?.unlocked ? (
+                <div className="flex flex-col items-center text-center py-10">
+                  <span className="material-symbols-outlined text-[40px] text-on-surface-variant/40 mb-3">lock</span>
+                  <p className="font-body-md text-body-md text-on-surface-variant">Solve this problem to unlock the official solution.</p>
+                </div>
+              ) : officialSolution.solutions[language] ? (
+                <div>
+                  <p className="font-label-sm text-label-sm text-on-surface-variant mb-2">Official solution — {currentLang.label}</p>
+                  <pre className="bg-surface-container-low border border-surface-container-high rounded-md p-3 text-on-surface font-mono text-[12px] whitespace-pre-wrap break-words overflow-x-auto">{officialSolution.solutions[language]}</pre>
+                </div>
+              ) : (
+                <p className="font-body-md text-body-md text-on-surface-variant">No official solution available for {currentLang.label}.</p>
+              )
             )}
             {leftTab === "submissions" && (
               <p className="font-body-md text-body-md text-on-surface-variant">You haven&apos;t submitted a solution for this problem in this session.</p>
@@ -317,58 +445,95 @@ export function ProblemSolveView({ problem, functionStub, backHref, backLabel, b
             </div>
             <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
               {bottomTab === "testcases" && (
-                visibleCases.length === 0 ? (
-                  <p className="font-label-md text-[13px] text-on-surface-variant">No visible test cases for this problem.</p>
-                ) : (
-                  <div>
-                    <div className="flex gap-2 mb-4">
-                      {visibleCases.map((_, i) => (
-                        <button
-                          key={i}
-                          onClick={() => setActiveCase(i)}
-                          className={`px-4 py-1.5 rounded-full font-label-md text-label-md transition-colors ${activeCase === i ? "bg-secondary/10 text-secondary" : "hover:bg-surface-container text-on-surface-variant"}`}
-                        >
-                          Case {i + 1}
-                        </button>
-                      ))}
-                    </div>
-                    {isFunctionOnly ? (
-                      <div className="space-y-4">
-                        {problem.functionSignature?.params.map((p, i) => (
+                <div>
+                  <div className="flex gap-2 mb-4 flex-wrap">
+                    {visibleCases.map((_, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setActiveCase(i)}
+                        className={`px-4 py-1.5 rounded-full font-label-md text-label-md transition-colors ${activeCase === i ? "bg-secondary/10 text-secondary" : "hover:bg-surface-container text-on-surface-variant"}`}
+                      >
+                        Case {i + 1}
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => setActiveCase(-1)}
+                      className={`flex items-center gap-1 px-4 py-1.5 rounded-full font-label-md text-label-md transition-colors ${activeCase === -1 ? "bg-secondary/10 text-secondary" : "hover:bg-surface-container text-on-surface-variant"}`}
+                    >
+                      <span className="material-symbols-outlined text-[15px]">edit</span> Custom
+                    </button>
+                  </div>
+                  {activeCase === -1 ? (
+                    <div className="space-y-4">
+                      {isFunctionOnly ? (
+                        (problem.functionSignature?.params ?? []).map((p, i) => (
                           <div key={i}>
                             <label className="block text-xs text-on-surface-variant mb-1">{p.name} <span className="text-on-surface-variant/60">({p.type})</span></label>
-                            <div className="bg-surface-container-low border border-surface-container-high rounded-md p-3 text-on-surface font-label-md text-[13px]">
-                              {formatArgForDisplay((visibleCases[activeCase] as FunctionTestCase | undefined)?.args[i])}
-                            </div>
+                            <input
+                              type="text"
+                              value={customArgInputs[i] ?? ""}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setCustomArgInputs((prev) => { const next = [...prev]; next[i] = val; return next; });
+                              }}
+                              placeholder={p.type.endsWith("[]") ? "comma-separated, e.g. 1, 2, 3" : "value"}
+                              className="w-full bg-surface-container-low border border-surface-container-high rounded-md p-3 text-on-surface font-label-md text-[13px] focus:outline-none focus:ring-1 focus:ring-secondary"
+                            />
+                            {customArgErrors[i] && <p className="text-error text-xs mt-1">{customArgErrors[i]}</p>}
                           </div>
-                        ))}
+                        ))
+                      ) : (
                         <div>
-                          <label className="block text-xs text-on-surface-variant mb-1">
-                            Expected Output {problem.functionSignature && <span className="text-on-surface-variant/60">({problem.functionSignature.returnType})</span>}
-                          </label>
+                          <label className="block text-xs text-on-surface-variant mb-1">Input (stdin)</label>
+                          <textarea
+                            value={customStdin}
+                            onChange={(e) => setCustomStdin(e.target.value)}
+                            rows={6}
+                            placeholder="Type your own input here"
+                            className="w-full bg-surface-container-low border border-surface-container-high rounded-md p-3 text-on-surface font-mono text-[13px] focus:outline-none focus:ring-1 focus:ring-secondary"
+                          />
+                        </div>
+                      )}
+                      <p className="text-on-surface-variant text-xs">Run to see your output — custom input has no expected answer to compare against.</p>
+                    </div>
+                  ) : visibleCases.length === 0 ? (
+                    <p className="font-label-md text-[13px] text-on-surface-variant">No visible test cases for this problem. Use Custom to test your code with your own input.</p>
+                  ) : isFunctionOnly ? (
+                    <div className="space-y-4">
+                      {problem.functionSignature?.params.map((p, i) => (
+                        <div key={i}>
+                          <label className="block text-xs text-on-surface-variant mb-1">{p.name} <span className="text-on-surface-variant/60">({p.type})</span></label>
                           <div className="bg-surface-container-low border border-surface-container-high rounded-md p-3 text-on-surface font-label-md text-[13px]">
-                            {formatArgForDisplay((visibleCases[activeCase] as FunctionTestCase | undefined)?.expected)}
+                            {formatArgForDisplay((visibleCases[activeCase] as FunctionTestCase | undefined)?.args[i])}
                           </div>
+                        </div>
+                      ))}
+                      <div>
+                        <label className="block text-xs text-on-surface-variant mb-1">
+                          Expected Output {problem.functionSignature && <span className="text-on-surface-variant/60">({problem.functionSignature.returnType})</span>}
+                        </label>
+                        <div className="bg-surface-container-low border border-surface-container-high rounded-md p-3 text-on-surface font-label-md text-[13px]">
+                          {formatArgForDisplay((visibleCases[activeCase] as FunctionTestCase | undefined)?.expected)}
                         </div>
                       </div>
-                    ) : (
-                      <div className="space-y-4">
-                        <div>
-                          <label className="block text-xs text-on-surface-variant mb-1">Input</label>
-                          <div className="bg-surface-container-low border border-surface-container-high rounded-md p-3 text-on-surface font-label-md text-[13px]">
-                            {(visibleCases[activeCase] as TestCase | undefined)?.input}
-                          </div>
-                        </div>
-                        <div>
-                          <label className="block text-xs text-on-surface-variant mb-1">Expected Output</label>
-                          <div className="bg-surface-container-low border border-surface-container-high rounded-md p-3 text-on-surface font-label-md text-[13px]">
-                            {(visibleCases[activeCase] as TestCase | undefined)?.expected}
-                          </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs text-on-surface-variant mb-1">Input</label>
+                        <div className="bg-surface-container-low border border-surface-container-high rounded-md p-3 text-on-surface font-label-md text-[13px]">
+                          {(visibleCases[activeCase] as TestCase | undefined)?.input}
                         </div>
                       </div>
-                    )}
-                  </div>
-                )
+                      <div>
+                        <label className="block text-xs text-on-surface-variant mb-1">Expected Output</label>
+                        <div className="bg-surface-container-low border border-surface-container-high rounded-md p-3 text-on-surface font-label-md text-[13px]">
+                          {(visibleCases[activeCase] as TestCase | undefined)?.expected}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
               {bottomTab === "output" && (
                 <div className="font-label-md text-[13px]">
@@ -376,13 +541,28 @@ export function ProblemSolveView({ problem, functionStub, backHref, backLabel, b
                     <p className="text-on-surface-variant">Running your code…</p>
                   )}
                   {!hasRun && !isRunning && (
-                    <p className="text-on-surface-variant">Click Run to test Case {activeCase + 1}, or Run All to test every visible case.</p>
+                    <p className="text-on-surface-variant">Click Run to test {activeCase === -1 ? "your custom input" : `Case ${activeCase + 1}`}, or Run All to test every visible case.</p>
                   )}
                   {hasRun && !isRunning && runResults && (
                     <div className="space-y-6">
-                      {runResults.map(({ caseIndex, result: runResult }) => (
+                      {runResults.map(({ caseIndex, result: runResult }) => {
+                        const verdict = caseVerdict(caseIndex, runResult);
+                        const tc = visibleCases[caseIndex];
+                        const expectedDisplay = tc
+                          ? isFunctionOnly
+                            ? formatArgForDisplay((tc as FunctionTestCase).expected)
+                            : (tc as TestCase).expected
+                          : "";
+                        return (
                         <div key={caseIndex} className="space-y-3">
-                          <p className="font-label-sm font-semibold text-on-surface">Case {caseIndex + 1}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="font-label-sm font-semibold text-on-surface">{caseIndex === -1 ? "Custom Input" : `Case ${caseIndex + 1}`}</p>
+                            {verdict !== null && (
+                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-label-sm text-[11px] font-semibold ${verdict ? "bg-status-solved-bg text-status-solved-text" : "bg-status-wrong-bg text-status-wrong-text"}`}>
+                                {verdict ? "Passed" : "Failed"}
+                              </span>
+                            )}
+                          </div>
                           {!runResult.ok ? (
                             <div className="space-y-1">
                               <p className="text-error font-label-sm font-semibold">Error</p>
@@ -399,9 +579,17 @@ export function ProblemSolveView({ problem, functionStub, backHref, backLabel, b
                               {runResult.statusLabel && !runResult.compileOutput && (
                                 <p className="text-error font-label-sm font-semibold">{runResult.statusLabel}</p>
                               )}
-                              <div>
-                                <label className="block text-xs text-on-surface-variant mb-1">Output (stdout)</label>
-                                <pre className="bg-surface-container-low border border-surface-container-high rounded-md p-3 text-on-surface font-mono text-[12px] whitespace-pre-wrap break-words">{runResult.stdout || "(no output)"}</pre>
+                              <div className={verdict !== null ? "grid grid-cols-2 gap-4" : ""}>
+                                <div>
+                                  <label className="block text-xs text-on-surface-variant mb-1">Your Output</label>
+                                  <pre className={`border rounded-md p-3 font-mono text-[12px] whitespace-pre-wrap break-words ${verdict === false ? "bg-status-wrong-bg/40 border-status-wrong-text/30 text-on-surface" : "bg-surface-container-low border-surface-container-high text-on-surface"}`}>{runResult.stdout || "(no output)"}</pre>
+                                </div>
+                                {verdict !== null && (
+                                  <div>
+                                    <label className="block text-xs text-on-surface-variant mb-1">Expected Output</label>
+                                    <pre className="bg-surface-container-low border border-surface-container-high rounded-md p-3 text-on-surface font-mono text-[12px] whitespace-pre-wrap break-words">{expectedDisplay}</pre>
+                                  </div>
+                                )}
                               </div>
                               {runResult.stderr && (
                                 <div className="space-y-1">
@@ -412,17 +600,24 @@ export function ProblemSolveView({ problem, functionStub, backHref, backLabel, b
                               <div className="grid grid-cols-2 gap-4 pt-1">
                                 <div>
                                   <p className="text-on-surface-variant text-xs mb-1 font-label-sm">Execution Time</p>
-                                  <p className="text-on-surface font-label-md">{runResult.executionTimeMs !== null ? `${runResult.executionTimeMs} ms` : "—"}</p>
+                                  <p className="text-on-surface font-label-md">
+                                    {runResult.executionTimeMs !== null ? `${runResult.executionTimeMs} ms` : "—"}
+                                    <span className="text-on-surface-variant text-xs"> / {(executionLimits.cpuTimeLimitSeconds * 1000).toFixed(0)} ms limit</span>
+                                  </p>
                                 </div>
                                 <div>
                                   <p className="text-on-surface-variant text-xs mb-1 font-label-sm">Memory</p>
-                                  <p className="text-on-surface font-label-md">{runResult.memoryKb !== null ? `${(runResult.memoryKb / 1024).toFixed(1)} MB` : "—"}</p>
+                                  <p className="text-on-surface font-label-md">
+                                    {runResult.memoryKb !== null ? `${(runResult.memoryKb / 1024).toFixed(1)} MB` : "—"}
+                                    <span className="text-on-surface-variant text-xs"> / {(executionLimits.memoryLimitKb / 1024).toFixed(0)} MB limit</span>
+                                  </p>
                                 </div>
                               </div>
                             </>
                           )}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -446,6 +641,21 @@ export function ProblemSolveView({ problem, functionStub, backHref, backLabel, b
                         <p className="font-label-sm text-[12px] text-on-surface-variant mb-6">
                           {submitResult.passedTests} / {submitResult.totalTests} test {submitResult.totalTests === 1 ? "case" : "cases"} passed
                         </p>
+                        {failedVisibleCaseDetail && (
+                          <div className="mb-6">
+                            <label className="block text-xs text-on-surface-variant mb-2">Failed on Case {failedVisibleCaseDetail.index + 1}</label>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <label className="block text-xs text-on-surface-variant mb-1">Your Output</label>
+                                <pre className="bg-status-wrong-bg/40 border border-status-wrong-text/30 rounded-md p-3 text-on-surface font-mono text-[12px] whitespace-pre-wrap break-words">{failedVisibleCaseDetail.actualDisplay || "(no output)"}</pre>
+                              </div>
+                              <div>
+                                <label className="block text-xs text-on-surface-variant mb-1">Expected Output</label>
+                                <pre className="bg-surface-container-low border border-surface-container-high rounded-md p-3 text-on-surface font-mono text-[12px] whitespace-pre-wrap break-words">{failedVisibleCaseDetail.expectedDisplay}</pre>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                         {submitResult.compileOutput && (
                           <div className="space-y-1 mb-6">
                             <label className="block text-xs text-on-surface-variant mb-1">Compile Output</label>
@@ -458,16 +668,33 @@ export function ProblemSolveView({ problem, functionStub, backHref, backLabel, b
                             <pre className="text-error/90 whitespace-pre-wrap break-words font-mono text-[12px] bg-error/5 border border-error/20 rounded-md p-3">{submitResult.stderr}</pre>
                           </div>
                         )}
-                        <div className="grid grid-cols-2 gap-4 mb-6">
+                        <div className="grid grid-cols-2 gap-4 mb-2">
                           <div>
                             <p className="text-on-surface-variant text-xs mb-1 font-label-sm">Runtime</p>
-                            <p className="text-on-surface font-label-md">{submitResult.executionTimeMs} ms</p>
+                            <p className="text-on-surface font-label-md">
+                              {submitResult.executionTimeMs} ms
+                              <span className="text-on-surface-variant text-xs"> / {(executionLimits.cpuTimeLimitSeconds * 1000).toFixed(0)} ms limit</span>
+                            </p>
                           </div>
                           <div>
                             <p className="text-on-surface-variant text-xs mb-1 font-label-sm">Memory</p>
-                            <p className="text-on-surface font-label-md">{(submitResult.memoryKb / 1024).toFixed(1)} MB</p>
+                            <p className="text-on-surface font-label-md">
+                              {(submitResult.memoryKb / 1024).toFixed(1)} MB
+                              <span className="text-on-surface-variant text-xs"> / {(executionLimits.memoryLimitKb / 1024).toFixed(0)} MB limit</span>
+                            </p>
                           </div>
                         </div>
+                        {submitResult.verdict === "Accepted" && (
+                          <p className="font-label-sm text-[12px] text-on-surface-variant mb-6">
+                            {previousBest === null
+                              ? "This is your first accepted submission for this problem."
+                              : submitResult.executionTimeMs < previousBest.executionTimeMs
+                              ? `Faster than your previous best (${previousBest.executionTimeMs} ms → ${submitResult.executionTimeMs} ms).`
+                              : submitResult.executionTimeMs > previousBest.executionTimeMs
+                              ? `Your previous best: ${previousBest.executionTimeMs} ms (this attempt: ${submitResult.executionTimeMs} ms).`
+                              : `Matches your previous best (${submitResult.executionTimeMs} ms).`}
+                          </p>
+                        )}
                         <div>
                           <h3 className="font-headline-md text-[14px] text-on-surface mb-3 border-b border-surface-container-high pb-2">Submit Info</h3>
                           <div className="space-y-3 font-label-md text-[13px]">

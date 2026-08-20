@@ -142,3 +142,25 @@ export async function getAllProgrammingSubmissions(filter?: {
   });
   return rows.map(toRecord);
 }
+
+export interface BestSubmissionStats {
+  executionTimeMs: number;
+  memoryKb: number;
+}
+
+// Self-scoped — derives the student from session, same pattern as
+// getMyPurchases in lib/actions/settings.ts. Only considers Accepted
+// submissions, since comparing runtime against a failed attempt isn't
+// meaningful. Callers should fetch this BEFORE calling submitProgrammingCode
+// for the "previous best" comparison to be correct — otherwise the
+// just-created submission would already be included in the pool being
+// compared against.
+export async function getMyBestAcceptedSubmission(problemId: number): Promise<BestSubmissionStats | null> {
+  const auth = await getAuth();
+  if (!auth) return null;
+  return prisma.programmingSubmission.findFirst({
+    where: { studentId: auth.userId, problemId, verdict: "Accepted" },
+    orderBy: { executionTimeMs: "asc" },
+    select: { executionTimeMs: true, memoryKb: true },
+  });
+}

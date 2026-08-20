@@ -244,6 +244,38 @@ export async function getProblemById(id: number): Promise<ProgrammingProblemReco
   return toRecord(row);
 }
 
+export interface OfficialSolutionResult {
+  unlocked: boolean;
+  solutions: Record<string, string>;
+}
+
+// Reveals the admin-authored official solution(s) for a problem only after
+// the requesting student has at least one Accepted submission for it —
+// checked fresh against the database every call, never trusted from any
+// client-side "I just got Accepted" state, so this can't be unlocked by
+// merely claiming success. Admins always see it, consistent with every other
+// admin exemption in this file.
+export async function getOfficialSolutionIfUnlocked(problemId: number): Promise<OfficialSolutionResult> {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { unlocked: false, solutions: {} };
+
+  const isAdmin = user.app_metadata?.role === "admin";
+  if (!isAdmin) {
+    const accepted = await prisma.programmingSubmission.findFirst({
+      where: { studentId: user.id, problemId, verdict: "Accepted" },
+      select: { id: true },
+    });
+    if (!accepted) return { unlocked: false, solutions: {} };
+  }
+
+  const problem = await prisma.programmingProblem.findUnique({
+    where: { id: problemId },
+    select: { officialSolutions: true },
+  });
+  return { unlocked: true, solutions: (problem?.officialSolutions as Record<string, string>) ?? {} };
+}
+
 export async function createProblem(
   data: ProblemFormInput
 ): Promise<{ id: number } | { error: string }> {

@@ -28,6 +28,14 @@ export interface ProgrammingSubmitResult {
   stderr: string | null;
   compileOutput: string | null;
   error: string | null;
+  // Only ever set on a "Wrong Answer" verdict when grading fell back to the
+  // problem's visible test cases (no hidden cases configured) — the index
+  // (0-based, into problem.testCases / functionTestCases) of the case that
+  // failed, plus the raw output the student's own code produced for it. The
+  // client already has that case's input/expected (visible cases are already
+  // sent to it), so this reveals nothing new — grading against hidden cases
+  // never sets this, since hidden case content must never reach the client.
+  failedVisibleCase?: { index: number; actualOutput: string } | null;
 }
 
 function rejection(reason: string): ProgrammingSubmitResult {
@@ -51,7 +59,10 @@ async function gradeAgainstTestCases(
   code: string,
   languageId: number,
   testCases: TestCase[],
-  limits: ResolvedExecutionLimits
+  limits: ResolvedExecutionLimits,
+  // Only true when testCases is the problem's visible set (no hidden cases
+  // configured) — see ProgrammingSubmitResult.failedVisibleCase.
+  revealFailures: boolean
 ): Promise<ProgrammingSubmitResult> {
   let passedTests = 0;
   let lastExecutionTimeMs = 0;
@@ -62,7 +73,8 @@ async function gradeAgainstTestCases(
   // ceiling is classified as MLE rather than a generic crash.
   const mleThresholdKb = limits.memoryLimitKb * 0.9;
 
-  for (const testCase of testCases) {
+  for (let caseIndex = 0; caseIndex < testCases.length; caseIndex++) {
+    const testCase = testCases[caseIndex];
     const run = await executeOnJudge0(code, languageId, {
       stdin: testCase.input,
       cpuTimeLimitSeconds: limits.cpuTimeLimitSeconds,
@@ -143,6 +155,7 @@ async function gradeAgainstTestCases(
         stderr: null,
         compileOutput: null,
         error: null,
+        failedVisibleCase: revealFailures ? { index: caseIndex, actualOutput: data.stdout ?? "" } : null,
       };
     }
 
@@ -173,7 +186,10 @@ async function gradeAgainstFunctionTestCases(
   sig: FunctionSignature,
   testCases: FunctionTestCase[],
   limits: ResolvedExecutionLimits,
-  adapterRenderDriver: (sig: FunctionSignature, code: string) => string
+  adapterRenderDriver: (sig: FunctionSignature, code: string) => string,
+  // Only true when testCases is the problem's visible set (no hidden cases
+  // configured) — see ProgrammingSubmitResult.failedVisibleCase.
+  revealFailures: boolean
 ): Promise<ProgrammingSubmitResult> {
   let passedTests = 0;
   let lastExecutionTimeMs = 0;
@@ -183,7 +199,8 @@ async function gradeAgainstFunctionTestCases(
   // per case, only the stdin fed to it does.
   const sourceCode = adapterRenderDriver(sig, studentCode);
 
-  for (const testCase of testCases) {
+  for (let caseIndex = 0; caseIndex < testCases.length; caseIndex++) {
+    const testCase = testCases[caseIndex];
     const run = await executeOnJudge0(sourceCode, languageId, {
       stdin: encodeArgsAsStdin(testCase.args),
       cpuTimeLimitSeconds: limits.cpuTimeLimitSeconds,
@@ -265,6 +282,7 @@ async function gradeAgainstFunctionTestCases(
         stderr: comparison.parseError ? `${comparison.parseError} (check for NaN/Infinity or any extra output your function/driver call printed)` : null,
         compileOutput: null,
         error: null,
+        failedVisibleCase: revealFailures ? { index: caseIndex, actualOutput: data.stdout ?? "" } : null,
       };
     }
 
@@ -401,7 +419,8 @@ export async function submitProgrammingCode(
           problem.functionSignature,
           gradingCases,
           limits,
-          adapter.renderDriver
+          adapter.renderDriver,
+          problem.functionHiddenTestCases.length === 0
         );
       }
     } else {
@@ -409,7 +428,7 @@ export async function submitProgrammingCode(
       result =
         gradingCases.length === 0
           ? { ...rejection("This problem has no test cases configured."), error: "This problem has no test cases configured." }
-          : await gradeAgainstTestCases(input.code, JUDGE0_LANGUAGE_IDS[input.language], gradingCases, limits);
+          : await gradeAgainstTestCases(input.code, JUDGE0_LANGUAGE_IDS[input.language], gradingCases, limits, problem.hiddenTestCases.length === 0);
     }
 
     // Persist best-effort — a storage failure shouldn't hide the graded result from the student.
