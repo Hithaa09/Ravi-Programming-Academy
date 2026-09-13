@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { logError } from "@/lib/log";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { recordAuditLog } from "@/lib/audit-log";
 import type { Difficulty, DbEngine, SqlHiddenDataset, QuestionStatus, QuestionAvailability, AccessType } from "@/lib/types";
 
 const VALID_DIFFICULTIES = ["Easy", "Medium", "Hard"];
@@ -212,7 +213,7 @@ export async function getSqlProblemById(id: number): Promise<SqlProblemRecord | 
 export async function createSqlProblem(
   data: SqlProblemFormInput
 ): Promise<{ id: number } | { error: string }> {
-  await requireAdmin();
+  const adminId = await requireAdmin();
   const validationError = validateSqlProblemInput(data);
   if (validationError) return { error: validationError };
   try {
@@ -238,6 +239,7 @@ export async function createSqlProblem(
       },
     });
     revalidatePath("/admin/sql-problems");
+    await recordAuditLog(adminId, "problem.create", { targetType: "sql_problem", targetId: String(problem.id), details: { title: data.title } });
     return { id: problem.id };
   } catch (e) {
     logError("createSqlProblem error", { context: { error: e instanceof Error ? e.message : String(e) } });
@@ -249,7 +251,7 @@ export async function updateSqlProblem(
   id: number,
   data: SqlProblemFormInput
 ): Promise<{ error: string } | null> {
-  await requireAdmin();
+  const adminId = await requireAdmin();
   const validationError = validateSqlProblemInput(data);
   if (validationError) return { error: validationError };
   try {
@@ -277,6 +279,7 @@ export async function updateSqlProblem(
     });
     revalidatePath("/admin/sql-problems");
     revalidatePath(`/admin/sql-problems/${id}`);
+    await recordAuditLog(adminId, "problem.update", { targetType: "sql_problem", targetId: String(id), details: { title: data.title } });
     return null;
   } catch (e) {
     logError("updateSqlProblem error", {
@@ -287,7 +290,7 @@ export async function updateSqlProblem(
 }
 
 export async function deleteSqlProblem(id: number): Promise<{ error: string } | null> {
-  await requireAdmin();
+  const adminId = await requireAdmin();
 
   // Never silently destroy grading history — see the identical check in
   // programming-problems.ts's deleteProblem().
@@ -301,6 +304,7 @@ export async function deleteSqlProblem(id: number): Promise<{ error: string } | 
   try {
     await prisma.sqlProblem.delete({ where: { id } });
     revalidatePath("/admin/sql-problems");
+    await recordAuditLog(adminId, "problem.delete", { targetType: "sql_problem", targetId: String(id) });
     return null;
   } catch (e) {
     logError("deleteSqlProblem error", {
@@ -342,6 +346,7 @@ export async function bulkCreateSqlProblems(
       })),
     });
     revalidatePath("/admin/sql-problems");
+    await recordAuditLog(adminId, "problem.bulk_create", { targetType: "sql_problem", details: { count: result.count } });
     return { inserted: result.count };
   } catch (e) {
     logError("bulkCreateSqlProblems error", {

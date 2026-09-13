@@ -125,9 +125,41 @@ model Profile {
   programmingSubmissions ProgrammingSubmission[]
   purchases              Purchase[]
   passwordHistory        PasswordHistory[]
+  auditLogEntries        AdminAuditLog[]
 
   @@index([role, status])
   @@map("profiles")
+}
+
+// Records who did what and when for the admin actions that actually matter
+// to be able to trace back later: suspending/reactivating a student,
+// granting/revoking manual lifetime access, and creating/editing/deleting a
+// problem. Deliberately not exhaustive (read-only actions like viewing a
+// student's detail page aren't logged) — this is for accountability on
+// state-changing actions, not a full request log.
+model AdminAuditLog {
+  id         Int      @id @default(autoincrement())
+  adminId    String
+  admin      Profile  @relation(fields: [adminId], references: [id])
+  // e.g. "student.suspend", "problem.update", "access.grant" — a small,
+  // fixed vocabulary maintained by convention at each call site, not an enum
+  // in the schema, so adding a new logged action never needs a migration.
+  action     String
+  // What the action was performed on, if applicable — targetId is a plain
+  // string (not an FK) since it spans both String ids (students) and Int
+  // ids (problems), and the target may later be deleted while the log entry
+  // itself should still make sense on its own.
+  targetType String?
+  targetId   String?
+  // Small, non-sensitive extra context (e.g. { previousStatus, newStatus },
+  // { title }) — never raw student PII beyond what's already in targetId,
+  // never secrets.
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  @@index([adminId])
+  @@index([action])
+  @@map("admin_audit_log")
 }
 
 // Independent of Supabase Auth's own password storage, which this app has no

@@ -24,6 +24,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "purchases", label: "Purchases", icon: "receipt_long", href: "/admin/purchases" },
   { id: "submissions", label: "Submissions", icon: "description", href: "/admin/submissions" },
   { id: "leaderboard", label: "Leaderboard", icon: "emoji_events", href: "/admin/leaderboard" },
+  { id: "audit-log", label: "Audit Log", icon: "fact_check", href: "/admin/audit-log" },
   { id: "settings", label: "Settings", icon: "settings", href: "/admin/settings" },
 ];
 

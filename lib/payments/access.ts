@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth/get-user";
+import { recordAuditLog } from "@/lib/audit-log";
 
 // The single seam every payment path plugs into. Every premium-access check
 // in the app — Run/Submit guards, solve pages, the student problem lists —
@@ -12,11 +13,12 @@ import { getAuthUser } from "@/lib/auth/get-user";
 // touch those call sites. See lib/payments/checkout.ts for the actual
 // Razorpay checkout flow, and lib/payments/razorpay.ts for the SDK wrapper.
 
-async function requireAdmin(): Promise<void> {
+async function requireAdmin(): Promise<string> {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   const role = user?.app_metadata?.role;
   if (!user || role !== "admin") throw new Error("Unauthorized");
+  return user.id;
 }
 
 // Every export from a "use server" file is a directly callable endpoint —
@@ -123,7 +125,7 @@ export async function recordPurchaseAndGrantAccess(input: {
 // recordPurchaseAndGrantAccess directly via the checkout/webhook paths, not
 // through this function.
 export async function grantLifetimeAccess(studentId: string): Promise<void> {
-  await requireAdmin();
+  const adminId = await requireAdmin();
   await recordPurchaseAndGrantAccess({
     studentId,
     provider: "manual",
@@ -132,14 +134,16 @@ export async function grantLifetimeAccess(studentId: string): Promise<void> {
     currency: "INR",
     status: "completed",
   });
+  await recordAuditLog(adminId, "access.grant", { targetType: "student", targetId: studentId });
 }
 
 // Admin-only — for correcting mistakes or testing. Does not delete Purchase
 // history, only flips the access flag back off.
 export async function revokeLifetimeAccess(studentId: string): Promise<void> {
-  await requireAdmin();
+  const adminId = await requireAdmin();
   await prisma.profile.update({
     where: { id: studentId },
     data: { hasLifetimeAccess: false },
   });
+  await recordAuditLog(adminId, "access.revoke", { targetType: "student", targetId: studentId });
 }

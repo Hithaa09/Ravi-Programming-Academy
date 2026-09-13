@@ -3,12 +3,14 @@
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { recordAuditLog } from "@/lib/audit-log";
 
-async function requireAdmin(): Promise<void> {
+async function requireAdmin(): Promise<string> {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   const role = user?.app_metadata?.role;
   if (!user || role !== "admin") throw new Error("Unauthorized");
+  return user.id;
 }
 
 export interface PlatformSettingsRecord {
@@ -33,7 +35,7 @@ export async function getPlatformSettings(): Promise<PlatformSettingsRecord> {
 export async function updatePlatformSettings(
   input: { paymentsEnabled?: boolean; subscriptionPriceInr?: number }
 ): Promise<{ error: string | null }> {
-  await requireAdmin();
+  const adminId = await requireAdmin();
 
   if (input.subscriptionPriceInr !== undefined) {
     if (!Number.isFinite(input.subscriptionPriceInr) || input.subscriptionPriceInr < 0) {
@@ -48,5 +50,6 @@ export async function updatePlatformSettings(
   });
   revalidatePath("/admin/settings");
   revalidatePath("/buy-subscription");
+  await recordAuditLog(adminId, "platform_settings.update", { details: input });
   return { error: null };
 }

@@ -3,14 +3,20 @@
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
 import { logError } from "@/lib/log";
+import { recordAuditLog } from "@/lib/audit-log";
 
 // ─── Auth guard ───────────────────────────────────────────────────────────────
 
-async function requireAdmin(): Promise<void> {
+// Returns the admin's own id — existing callers that only need the check
+// (`await requireAdmin();`) are unaffected, since discarding a return value
+// is always valid; callers that also need to record an audit entry use it
+// as the adminId without a second getUser() round trip.
+async function requireAdmin(): Promise<string> {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   const role = user?.app_metadata?.role;
   if (!user || role !== "admin") throw new Error("Unauthorized");
+  return user.id;
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -209,19 +215,21 @@ export async function getStudentStats(studentId: string): Promise<StudentStats> 
 // ─── Activate / Suspend ───────────────────────────────────────────────────────
 
 export async function activateStudent(studentId: string): Promise<void> {
-  await requireAdmin();
+  const adminId = await requireAdmin();
   await prisma.profile.updateMany({
     where: { id: studentId, role: "student" },
     data: { status: "active" },
   });
+  await recordAuditLog(adminId, "student.activate", { targetType: "student", targetId: studentId });
 }
 
 export async function suspendStudent(studentId: string): Promise<void> {
-  await requireAdmin();
+  const adminId = await requireAdmin();
   await prisma.profile.updateMany({
     where: { id: studentId, role: "student" },
     data: { status: "suspended" },
   });
+  await recordAuditLog(adminId, "student.suspend", { targetType: "student", targetId: studentId });
 }
 
 // ─── Create student ───────────────────────────────────────────────────────────
@@ -233,7 +241,7 @@ export async function createStudent(input: {
   password: string;
   fullName: string;
 }): Promise<{ error: string | null }> {
-  await requireAdmin();
+  const adminId = await requireAdmin();
 
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!serviceRoleKey) {
@@ -286,5 +294,6 @@ export async function createStudent(input: {
     return { error: "Failed to create student account. No account was left behind — please try again." };
   }
 
+  await recordAuditLog(adminId, "student.create", { targetType: "student", targetId: data.user.id, details: { email: input.email } });
   return { error: null };
 }

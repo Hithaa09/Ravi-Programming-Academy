@@ -9,6 +9,7 @@ import { MIN_TIME_LIMIT_MS, MAX_TIME_LIMIT_MS, MIN_MEMORY_LIMIT_KB, MAX_MEMORY_L
 import { PARAM_TYPES, isValidIdentifierName, type FunctionSignature, type FunctionTestCase } from "@/lib/wrappers";
 import { logError } from "@/lib/log";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { recordAuditLog } from "@/lib/audit-log";
 
 const VALID_DIFFICULTIES = ["Easy", "Medium", "Hard"];
 const VALID_STATUSES = ["Draft", "Published", "Archived"];
@@ -279,7 +280,7 @@ export async function getOfficialSolutionIfUnlocked(problemId: number): Promise<
 export async function createProblem(
   data: ProblemFormInput
 ): Promise<{ id: number } | { error: string }> {
-  await requireAdmin();
+  const adminId = await requireAdmin();
   const validationError = validateProblemInput(data);
   if (validationError) return { error: validationError };
   try {
@@ -312,6 +313,7 @@ export async function createProblem(
       },
     });
     revalidatePath("/admin/programming-problems");
+    await recordAuditLog(adminId, "problem.create", { targetType: "programming_problem", targetId: String(problem.id), details: { title: data.title } });
     return { id: problem.id };
   } catch (e) {
     logError("createProblem error", { context: { error: e instanceof Error ? e.message : String(e) } });
@@ -323,7 +325,7 @@ export async function updateProblem(
   id: number,
   data: ProblemFormInput
 ): Promise<{ error: string } | null> {
-  await requireAdmin();
+  const adminId = await requireAdmin();
   const validationError = validateProblemInput(data);
   if (validationError) return { error: validationError };
   try {
@@ -357,6 +359,7 @@ export async function updateProblem(
     });
     revalidatePath("/admin/programming-problems");
     revalidatePath(`/admin/programming-problems/${id}`);
+    await recordAuditLog(adminId, "problem.update", { targetType: "programming_problem", targetId: String(id), details: { title: data.title } });
     return null;
   } catch (e) {
     logError("updateProblem error", {
@@ -367,7 +370,7 @@ export async function updateProblem(
 }
 
 export async function deleteProblem(id: number): Promise<{ error: string } | null> {
-  await requireAdmin();
+  const adminId = await requireAdmin();
 
   // Never silently destroy grading history — a problem with submissions
   // must be archived (status: "Archived"), not deleted. The FK is also
@@ -383,6 +386,7 @@ export async function deleteProblem(id: number): Promise<{ error: string } | nul
   try {
     await prisma.programmingProblem.delete({ where: { id } });
     revalidatePath("/admin/programming-problems");
+    await recordAuditLog(adminId, "problem.delete", { targetType: "programming_problem", targetId: String(id) });
     return null;
   } catch (e) {
     logError("deleteProblem error", {
@@ -431,6 +435,7 @@ export async function bulkCreateProgrammingProblems(
       })),
     });
     revalidatePath("/admin/programming-problems");
+    await recordAuditLog(adminId, "problem.bulk_create", { targetType: "programming_problem", details: { count: result.count } });
     return { inserted: result.count };
   } catch (e) {
     logError("bulkCreateProgrammingProblems error", {
