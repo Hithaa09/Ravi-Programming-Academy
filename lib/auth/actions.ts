@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { validateNewPassword } from "@/lib/password-policy";
 import { isPasswordReused, recordPasswordChange } from "@/lib/auth/password-history";
+import { verifyTurnstileToken } from "@/lib/turnstile";
 
 export interface AuthResult {
   error: string | null;
@@ -19,11 +20,16 @@ export interface AuthResult {
 export async function signUp(
   email: string,
   password: string,
-  fullName: string
+  fullName: string,
+  turnstileToken: string
 ): Promise<AuthResult> {
   const signupLimit = checkRateLimit("signup", getClientIp());
   if (!signupLimit.allowed) {
     return { error: "Too many signup attempts from this network. Please wait a while and try again." };
+  }
+
+  if (!(await verifyTurnstileToken(turnstileToken))) {
+    return { error: "Verification failed. Please refresh the page and try again." };
   }
 
   const supabase = createClient();
@@ -64,11 +70,16 @@ export async function signUp(
 
 export async function signIn(
   email: string,
-  password: string
+  password: string,
+  turnstileToken: string
 ): Promise<AuthResult> {
   const loginLimit = checkRateLimit("login", getClientIp());
   if (!loginLimit.allowed) {
     return { error: "Too many login attempts from this network. Please wait a while and try again." };
+  }
+
+  if (!(await verifyTurnstileToken(turnstileToken))) {
+    return { error: "Verification failed. Please refresh the page and try again." };
   }
 
   const supabase = createClient();
@@ -106,13 +117,20 @@ export async function signIn(
 
 export async function adminSignIn(
   email: string,
-  password: string
+  password: string,
+  turnstileToken: string
 ): Promise<AuthResult> {
   // Same "login" bucket as the student signIn() above, intentionally — see
   // the comment on RATE_LIMITS.login in lib/rate-limit.ts.
   const loginLimit = checkRateLimit("login", getClientIp());
   if (!loginLimit.allowed) {
     return { error: "Too many login attempts from this network. Please wait a while and try again." };
+  }
+
+  // Admin login is the higher-value target for scripted credential-stuffing
+  // attempts, so it gets the same Turnstile gate as student auth.
+  if (!(await verifyTurnstileToken(turnstileToken))) {
+    return { error: "Verification failed. Please refresh the page and try again." };
   }
 
   const supabase = createClient();

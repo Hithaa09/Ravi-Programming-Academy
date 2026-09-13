@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signIn, signUp } from "@/lib/auth/actions";
 import { createClient } from "@/lib/supabase/client";
+import TurnstileWidget from "@/components/TurnstileWidget";
 
 // useSearchParams() (used below to read ?error=... query params) requires a
 // Suspense boundary during static prerendering, or `next build` fails on
@@ -49,6 +50,11 @@ function LoginPageInner() {
   const [signupPassword, setSignupPassword] = useState("");
   const [signupConfirm, setSignupConfirm] = useState("");
 
+  // Separate tokens per form — each Turnstile widget instance issues its
+  // own token, and login/signup are submitted independently.
+  const [loginTurnstileToken, setLoginTurnstileToken] = useState("");
+  const [signupTurnstileToken, setSignupTurnstileToken] = useState("");
+
   function switchTab(next: "login" | "signup") {
     setTab(next);
     setError(null);
@@ -59,7 +65,7 @@ function LoginPageInner() {
     e.preventDefault();
     setError(null);
     setLoading(true);
-    const result = await signIn(loginEmail, loginPassword);
+    const result = await signIn(loginEmail, loginPassword, loginTurnstileToken);
     setLoading(false);
     if (result.error) { setError(result.error); return; }
     router.push("/dashboard");
@@ -90,7 +96,7 @@ function LoginPageInner() {
     }
     setError(null);
     setLoading(true);
-    const result = await signUp(signupEmail, signupPassword, signupFullName);
+    const result = await signUp(signupEmail, signupPassword, signupFullName, signupTurnstileToken);
     setLoading(false);
     if (result.error) { setError(result.error); return; }
     if (result.requiresEmailConfirmation) { setSignupSuccess(true); return; }
@@ -177,6 +183,7 @@ grow();`}
                 <div className="flex justify-end text-sm">
                   <a href="/forgot-password" className="text-secondary font-medium">Forgot Password?</a>
                 </div>
+                <TurnstileWidget onVerify={setLoginTurnstileToken} onExpire={() => setLoginTurnstileToken("")} />
                 {error && (
                   <p className="font-label-md text-label-md text-error">{error}</p>
                 )}
@@ -249,6 +256,7 @@ grow();`}
                     className="w-full px-4 py-2.5 md:py-3 bg-white border border-outline-variant/50 rounded-lg focus:outline-none focus:ring-2 focus:ring-secondary"
                   />
                 </div>
+                <TurnstileWidget onVerify={setSignupTurnstileToken} onExpire={() => setSignupTurnstileToken("")} />
                 {error && (
                   <p className="font-label-md text-label-md text-error">{error}</p>
                 )}
