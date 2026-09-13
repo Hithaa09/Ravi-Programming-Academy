@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { verifyWebhookSignature } from "@/lib/payments/razorpay";
 import { recordPurchaseAndGrantAccess, revokeAccessForRefund } from "@/lib/payments/access";
 import { logError } from "@/lib/log";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 // Razorpay calls this directly — no session, no browser. Must stay publicly
 // reachable (see the exclusion in middleware.ts) and do its own auth via
@@ -21,6 +22,17 @@ import { logError } from "@/lib/log";
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  // Bounds worst-case request volume on this public, unauthenticated
+  // endpoint — checked before doing even the cheap signature-verification
+  // work, so a sustained spam attempt can't run up unbounded logError()
+  // (and therefore Sentry) reports. Keyed by IP, not any Razorpay identity,
+  // since a forged request has none; generous enough that Razorpay's own
+  // real delivery volume is never affected.
+  const rateLimit = checkRateLimit("webhook", getClientIp());
+  if (!rateLimit.allowed) {
+    return NextResponse.json({ error: "rate limited" }, { status: 429 });
+  }
+
   // Raw text, not request.json() — signature verification needs the exact
   // raw bytes Razorpay signed, not a re-serialized object (this is the
   // first raw-body-reading Route Handler in this codebase; no other route

@@ -5,6 +5,7 @@ import { hasLifetimeAccess, recordPurchaseAndGrantAccess } from "@/lib/payments/
 import { getPlatformSettings } from "@/lib/payments/settings";
 import { isRazorpayConfigured, createOrder, fetchOrder, verifyPaymentSignature } from "@/lib/payments/razorpay";
 import { logError } from "@/lib/log";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 const NOT_AVAILABLE = "Payments are not yet available. Check back soon.";
 
@@ -19,6 +20,11 @@ export async function initiateCheckout(): Promise<InitiateCheckoutResult> {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { available: false, message: "You must be signed in to buy a subscription." };
+
+  const rateLimit = checkRateLimit("checkout", user.id);
+  if (!rateLimit.allowed) {
+    return { available: false, message: "Too many checkout attempts. Please wait a moment and try again." };
+  }
 
   const settings = await getPlatformSettings();
   if (!settings.paymentsEnabled || settings.subscriptionPriceInr <= 0) {

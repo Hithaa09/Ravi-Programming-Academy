@@ -47,6 +47,18 @@ export const RATE_LIMITS = {
   // abuse pattern (password guessing) against the same origin.
   login: { windowMs: 15 * 60_000, max: 500 },
   passwordReset: { windowMs: 60 * 60_000, max: 500 },
+  // Keyed by userId (the student is already authenticated at this point) —
+  // a real "Buy Now" retry loop is a handful of clicks at most; this just
+  // stops a scripted loop from creating an unbounded number of Razorpay
+  // orders under one account.
+  checkout: { windowMs: 60_000, max: 5 },
+  // Keyed by IP, not userId — this endpoint has no session at all (Razorpay
+  // calls it directly). Generous enough that Razorpay's own normal delivery
+  // volume/retries are never affected; tight enough to bound a
+  // garbage-signature spam attempt against a public endpoint, which
+  // otherwise costs only a cheap HMAC check per request but could still run
+  // up repeated logError→Sentry reports without a cap.
+  webhook: { windowMs: 60_000, max: 60 },
 } as const satisfies Record<string, RateLimitConfig>;
 
 export type RateLimitAction = keyof typeof RATE_LIMITS;
