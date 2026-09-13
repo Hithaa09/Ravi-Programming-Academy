@@ -9,6 +9,11 @@ import { isPasswordReused, recordPasswordChange } from "@/lib/auth/password-hist
 export interface AuthResult {
   error: string | null;
   requiresEmailConfirmation?: boolean;
+  // Set only by adminSignIn, when the admin has a verified TOTP factor
+  // enrolled — the password was correct, but the session isn't fully
+  // established yet (still aal1) until adminVerifyMfaLogin succeeds too.
+  requiresMfa?: boolean;
+  mfaFactorId?: string;
 }
 
 export async function signUp(
@@ -148,6 +153,35 @@ export async function adminSignIn(
     });
   }
 
+  // Password alone isn't enough if 2FA is enrolled — signInWithPassword
+  // already established a real session at this point, but only at aal1;
+  // middleware blocks admin routes until adminVerifyMfaLogin below raises
+  // it to aal2. Not required to have gotten this far without 2FA enrolled
+  // at all — enrollment is opt-in, from Admin Settings.
+  const { data: factorsData } = await supabase.auth.mfa.listFactors();
+  const verifiedFactor = factorsData?.totp.find((f) => f.status === "verified");
+  if (verifiedFactor) {
+    return { error: null, requiresMfa: true, mfaFactorId: verifiedFactor.id };
+  }
+
+  return { error: null };
+}
+
+// Second step of admin login when a verified TOTP factor exists — raises
+// the session from aal1 to aal2. Until this succeeds, middleware treats the
+// admin as not fully authenticated for admin routes, regardless of the
+// valid session cookie signInWithPassword already set.
+export async function adminVerifyMfaLogin(factorId: string, code: string): Promise<AuthResult> {
+  const supabase = createClient();
+  const { data: challenge, error: challengeError } = await supabase.auth.mfa.challenge({ factorId });
+  if (challengeError || !challenge) return { error: challengeError?.message ?? "Something went wrong. Please try again." };
+
+  const { error } = await supabase.auth.mfa.verify({
+    factorId,
+    challengeId: challenge.id,
+    code,
+  });
+  if (error) return { error: "Incorrect code. Please try again." };
   return { error: null };
 }
 

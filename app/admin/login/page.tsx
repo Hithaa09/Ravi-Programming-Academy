@@ -3,7 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { adminSignIn } from "@/lib/auth/actions";
+import { adminSignIn, adminVerifyMfaLogin } from "@/lib/auth/actions";
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -14,11 +14,31 @@ export default function AdminLoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
+  // Set only after a correct password when the account has 2FA enrolled —
+  // switches the form to the "enter your code" step instead of finishing.
+  const [mfaFactorId, setMfaFactorId] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState("");
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setLoading(true);
     const result = await adminSignIn(email, password);
+    setLoading(false);
+    if (result.error) { setError(result.error); return; }
+    if (result.requiresMfa && result.mfaFactorId) {
+      setMfaFactorId(result.mfaFactorId);
+      return;
+    }
+    router.push("/admin/dashboard");
+  }
+
+  async function handleVerifyMfa(e: FormEvent) {
+    e.preventDefault();
+    if (!mfaFactorId) return;
+    setError(null);
+    setLoading(true);
+    const result = await adminVerifyMfaLogin(mfaFactorId, mfaCode);
     setLoading(false);
     if (result.error) { setError(result.error); return; }
     router.push("/admin/dashboard");
@@ -34,64 +54,106 @@ export default function AdminLoginPage() {
             <p className="font-body-md text-body-md text-secondary mt-1">Admin Panel</p>
           </div>
 
-          <p className="font-body-md text-body-md font-bold text-on-surface mb-4 md:mb-6">Sign in to your admin account.</p>
-
-          <form onSubmit={handleSubmit} className="space-y-4 md:space-y-5">
-            <div>
-              <label className="font-label-md text-label-md font-bold text-on-surface block mb-2">Username</label>
-              <div className="relative">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/60 text-[20px]">person</span>
-                <input
-                  type="text"
-                  placeholder="Enter username"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  className="w-full pl-10 pr-4 py-2.5 md:py-3 bg-white border border-outline-variant/50 rounded-lg focus:outline-none focus:ring-2 focus:ring-secondary"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="font-label-md text-label-md font-bold text-on-surface block mb-2">Password</label>
-              <div className="relative">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/60 text-[20px]">lock</span>
-                <input
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Enter password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  className="w-full pl-10 pr-12 py-2.5 md:py-3 bg-white border border-outline-variant/50 rounded-lg focus:outline-none focus:ring-2 focus:ring-secondary"
-                />
-                <button type="button" onClick={() => setShowPassword((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface">
-                  <span className="material-symbols-outlined text-[20px]">{showPassword ? "visibility" : "visibility_off"}</span>
+          {mfaFactorId ? (
+            <>
+              <p className="font-body-md text-body-md font-bold text-on-surface mb-2">Enter your authentication code</p>
+              <p className="font-label-md text-label-md text-on-surface-variant mb-4 md:mb-6">Open your authenticator app and enter the 6-digit code for this account.</p>
+              <form onSubmit={handleVerifyMfa} className="space-y-4 md:space-y-5">
+                <div>
+                  <label className="font-label-md text-label-md font-bold text-on-surface block mb-2">Authentication code</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    placeholder="000000"
+                    value={mfaCode}
+                    onChange={(e) => setMfaCode(e.target.value)}
+                    required
+                    autoFocus
+                    className="w-full px-4 py-2.5 md:py-3 bg-white border border-outline-variant/50 rounded-lg focus:outline-none focus:ring-2 focus:ring-secondary tracking-[0.3em] text-center font-mono text-lg"
+                  />
+                </div>
+                {error && (
+                  <p className="font-label-md text-label-md text-error">{error}</p>
+                )}
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-primary-container text-white py-2.5 md:py-3 rounded-lg font-label-md text-label-md font-bold hover:bg-primary-container/90 transition-colors disabled:opacity-60"
+                >
+                  {loading ? "Verifying…" : "Verify"}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => { setMfaFactorId(null); setMfaCode(""); setError(null); }}
+                  className="w-full font-label-md text-label-md text-on-surface-variant hover:text-on-surface text-center"
+                >
+                  Back to login
+                </button>
+              </form>
+            </>
+          ) : (
+            <>
+              <p className="font-body-md text-body-md font-bold text-on-surface mb-4 md:mb-6">Sign in to your admin account.</p>
+
+              <form onSubmit={handleSubmit} className="space-y-4 md:space-y-5">
+                <div>
+                  <label className="font-label-md text-label-md font-bold text-on-surface block mb-2">Username</label>
+                  <div className="relative">
+                    <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/60 text-[20px]">person</span>
+                    <input
+                      type="text"
+                      placeholder="Enter username"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      required
+                      className="w-full pl-10 pr-4 py-2.5 md:py-3 bg-white border border-outline-variant/50 rounded-lg focus:outline-none focus:ring-2 focus:ring-secondary"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="font-label-md text-label-md font-bold text-on-surface block mb-2">Password</label>
+                  <div className="relative">
+                    <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/60 text-[20px]">lock</span>
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      placeholder="Enter password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                      className="w-full pl-10 pr-12 py-2.5 md:py-3 bg-white border border-outline-variant/50 rounded-lg focus:outline-none focus:ring-2 focus:ring-secondary"
+                    />
+                    <button type="button" onClick={() => setShowPassword((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface">
+                      <span className="material-symbols-outlined text-[20px]">{showPassword ? "visibility" : "visibility_off"}</span>
+                    </button>
+                  </div>
+                </div>
+                {error && (
+                  <p className="font-label-md text-label-md text-error">{error}</p>
+                )}
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-primary-container text-white py-2.5 md:py-3 rounded-lg font-label-md text-label-md font-bold hover:bg-primary-container/90 transition-colors disabled:opacity-60"
+                >
+                  {loading ? "Signing in…" : "Sign In"}
+                </button>
+              </form>
+
+              <div className="flex items-center gap-3 my-4 md:my-6">
+                <div className="flex-1 h-px bg-outline-variant/30" />
+                <span className="font-label-sm text-label-sm text-on-surface-variant">OR</span>
+                <div className="flex-1 h-px bg-outline-variant/30" />
               </div>
-            </div>
-            {error && (
-              <p className="font-label-md text-label-md text-error">{error}</p>
-            )}
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-primary-container text-white py-2.5 md:py-3 rounded-lg font-label-md text-label-md font-bold hover:bg-primary-container/90 transition-colors disabled:opacity-60"
-            >
-              {loading ? "Signing in…" : "Sign In"}
-            </button>
-          </form>
 
-          <div className="flex items-center gap-3 my-4 md:my-6">
-            <div className="flex-1 h-px bg-outline-variant/30" />
-            <span className="font-label-sm text-label-sm text-on-surface-variant">OR</span>
-            <div className="flex-1 h-px bg-outline-variant/30" />
-          </div>
-
-          <Link
-            href="/login"
-            className="w-full flex items-center justify-center gap-2 border border-outline-variant/40 py-2.5 md:py-3 rounded-lg font-label-md text-label-md font-medium text-on-surface hover:bg-surface-container-low transition-colors"
-          >
-            <span className="material-symbols-outlined text-[18px]">school</span> Student Login
-          </Link>
+              <Link
+                href="/login"
+                className="w-full flex items-center justify-center gap-2 border border-outline-variant/40 py-2.5 md:py-3 rounded-lg font-label-md text-label-md font-medium text-on-surface hover:bg-surface-container-low transition-colors"
+              >
+                <span className="material-symbols-outlined text-[18px]">school</span> Student Login
+              </Link>
+            </>
+          )}
 
           <p className="font-label-sm text-label-sm text-on-surface-variant text-center mt-5 md:mt-8">© 2026 Ravi Programming Academy</p>
         </div>

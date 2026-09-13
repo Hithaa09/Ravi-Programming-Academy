@@ -14,6 +14,23 @@ export async function middleware(request: NextRequest) {
   const role = user?.app_metadata?.role;
   const isAdmin = isAuthenticated && role === "admin";
 
+  // Admins only — true when this account has a verified TOTP factor
+  // enrolled (nextLevel would be "aal2") but the CURRENT session hasn't
+  // completed that second step yet (currentLevel is still "aal1"). Without
+  // this check, a valid password-only session could reach admin routes
+  // directly, bypassing the authenticator-code step in
+  // adminVerifyMfaLogin/app/admin/login entirely — signInWithPassword alone
+  // already sets real session cookies before 2FA is verified. This is a
+  // local JWT-claim check (the aal is encoded in the session itself), not
+  // an extra network round trip.
+  let adminNeedsMfaStep = false;
+  if (isAdmin) {
+    const { data: aal } = await middlewareSupabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (aal && aal.nextLevel === "aal2" && aal.currentLevel !== "aal2") {
+      adminNeedsMfaStep = true;
+    }
+  }
+
   // ── Route classification ──────────────────────────────────────────────────
   const isStudentLoginPage = pathname === "/login";
   const isAdminLoginPage   = pathname === "/admin/login";
@@ -38,7 +55,10 @@ export async function middleware(request: NextRequest) {
     );
   }
 
-  if (isAdminLoginPage && isAuthenticated) {
+  // Not bounced away if still mid-MFA-step — the code-entry step happens
+  // as client-side state on this same page, not a real navigation, but this
+  // guards a manual refresh/re-visit while it's pending.
+  if (isAdminLoginPage && isAuthenticated && !adminNeedsMfaStep) {
     return NextResponse.redirect(
       new URL(isAdmin ? "/admin/dashboard" : "/dashboard", request.url)
     );
@@ -52,6 +72,12 @@ export async function middleware(request: NextRequest) {
     // Authenticated but not an admin (student) → student dashboard
     if (!isAdmin) {
       return NextResponse.redirect(new URL("/dashboard", request.url));
+    }
+    // Correct password, but the account has 2FA enrolled and this session
+    // hasn't completed that step yet — send back to complete it rather
+    // than letting a password-only session reach anything under /admin.
+    if (adminNeedsMfaStep) {
+      return NextResponse.redirect(new URL("/admin/login", request.url));
     }
   }
 

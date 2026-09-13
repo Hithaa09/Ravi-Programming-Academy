@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { updatePassword } from "@/lib/actions/settings";
 import { updatePlatformSettings } from "@/lib/payments/settings";
+import { MfaSettings } from "./MfaSettings";
 
 const SUB_TABS = [
   { id: "profile", label: "Profile", desc: "Manage your personal information", icon: "person" },
@@ -183,7 +184,7 @@ export function AdminSettingsClient({
           )}
 
           {subTab === "account" && (
-            <>
+            <div className="space-y-6">
               <Card className="p-card-padding max-w-xl">
                 <h2 className="font-headline-md text-headline-md text-on-surface mb-1">Change Password</h2>
                 <p className="font-body-md text-body-md text-on-surface-variant mb-6">Choose a strong password to keep your account secure.</p>
@@ -195,7 +196,8 @@ export function AdminSettingsClient({
                   <Button type="submit" disabled={saving}>{saving ? "Updating…" : "Update Password"}</Button>
                 </form>
               </Card>
-            </>
+              <MfaSettings />
+            </div>
           )}
 
           {subTab === "payments" && (

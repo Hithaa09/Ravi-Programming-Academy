@@ -26,6 +26,12 @@ This app trusts **only** `app_metadata.role` for authorization (see the security
 
 Equivalent manual alternative, if you'd rather not run the script: Supabase Dashboard → Authentication → Users → select the user → edit **App Metadata** (not User Metadata) → add `{"role": "admin"}`.
 
+## Two-factor authentication (admin accounts)
+
+Admins can enroll a TOTP authenticator app from Admin → Settings → Account — optional, not forced on existing admins, but strongly worth turning on since a single compromised password otherwise means full control of the platform (student data, payments, grading). Multiple authenticators can be enrolled on one account (e.g. a phone and a backup device), which doubles as the normal recovery path if one device is lost.
+
+**If an admin loses access to every enrolled authenticator and can't sign in at all:** `node scripts/reset-admin-mfa.js their-email@example.com` removes all of their enrolled factors via the service-role Admin API (the same credential `scripts/set-admin-role.js` uses), letting them sign in with just their password again and re-enroll a fresh authenticator. This bypasses the normal self-service removal path on purpose — that path requires already having a working authenticator, which is exactly what's unavailable in this scenario.
+
 ## Deploying to Vercel
 
 Everything below this point in the file (deploy steps, rollback, self-hosting Judge0) assumes a traditional always-on server (`npm run start`). Vercel is serverless — no persistent process, functions run per-request, potentially on different instances. That mismatch matters in exactly two places in this app; read these before deploying, not after something breaks silently in front of students.
