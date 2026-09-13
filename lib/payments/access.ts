@@ -120,6 +120,38 @@ export async function recordPurchaseAndGrantAccess(input: {
   }
 }
 
+// Reached only by the Razorpay webhook on a "refund.processed" event — see
+// app/webhooks/razorpay/route.ts. Looks up the original purchase by
+// Razorpay's payment_id (not by any studentId the refund payload might
+// carry) since that's the identifier we already have on file from when the
+// payment itself was captured — more robust than depending on Razorpay
+// having propagated notes onto the refund object too.
+//
+// Known, accepted edge case: this revokes based on whichever specific
+// Purchase row matches this payment_id. Since initiateCheckout already
+// refuses to start a new purchase while hasLifetimeAccess is true, a
+// student can only ever have re-purchased after a prior grant was already
+// revoked — so an old, unusually delayed/retried refund webhook arriving
+// after a genuine repurchase would incorrectly revoke that newer access.
+// This requires a specific, narrow sequence (delayed webhook + an
+// intervening manual re-grant) and isn't worth the extra complexity of
+// tracking "which purchase is currently active" separately to close
+// entirely.
+export async function revokeAccessForRefund(paymentId: string): Promise<{ ok: boolean; reason?: string }> {
+  const purchase = await prisma.purchase.findUnique({
+    where: { provider_providerReference: { provider: "razorpay", providerReference: paymentId } },
+  });
+  if (!purchase) {
+    return { ok: false, reason: `no purchase on file for Razorpay payment ${paymentId}` };
+  }
+
+  await prisma.$transaction([
+    prisma.purchase.update({ where: { id: purchase.id }, data: { status: "refunded" } }),
+    prisma.profile.update({ where: { id: purchase.studentId }, data: { hasLifetimeAccess: false } }),
+  ]);
+  return { ok: true };
+}
+
 // Admin-only manual grant — for students who pay outside Razorpay (cash,
 // bank transfer) or need a courtesy grant. Real Razorpay payments go through
 // recordPurchaseAndGrantAccess directly via the checkout/webhook paths, not

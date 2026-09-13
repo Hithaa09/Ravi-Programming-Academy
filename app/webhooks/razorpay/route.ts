@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { verifyWebhookSignature } from "@/lib/payments/razorpay";
-import { recordPurchaseAndGrantAccess } from "@/lib/payments/access";
+import { recordPurchaseAndGrantAccess, revokeAccessForRefund } from "@/lib/payments/access";
 import { logError } from "@/lib/log";
 
 // Razorpay calls this directly — no session, no browser. Must stay publicly
@@ -67,10 +67,29 @@ export async function POST(request: Request) {
       } else {
         logError("razorpay webhook: payment.captured missing studentId note or payment id", { context: { paymentId } });
       }
+    } else if (eventName === "refund.processed") {
+      // Any refund (partial or full) on a lifetime-access purchase revokes
+      // access — this is a flat one-time purchase, not usage-based, so a
+      // partial refund still means the admin decided this purchase should
+      // no longer stand.
+      const refund = (event as { payload?: { refund?: { entity?: Record<string, unknown> } } })?.payload?.refund?.entity;
+      const paymentId = refund?.payment_id as string | undefined;
+
+      if (paymentId) {
+        const result = await revokeAccessForRefund(paymentId);
+        if (!result.ok) {
+          logError("razorpay webhook: refund.processed could not find matching purchase", {
+            context: { paymentId, reason: result.reason },
+          });
+        }
+      } else {
+        logError("razorpay webhook: refund.processed missing payment_id", { context: {} });
+      }
     }
 
     // 2xx tells Razorpay not to retry; any other event type is intentionally
-    // ignored (acknowledged, not an error) — only payment.captured grants access.
+    // ignored (acknowledged, not an error) — only payment.captured and
+    // refund.processed change access.
     return NextResponse.json({ ok: true });
   } catch (e) {
     logError("razorpay webhook: unhandled error", { context: { error: e instanceof Error ? e.message : String(e) } });
