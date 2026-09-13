@@ -1,0 +1,28 @@
+name: Dependency Audit
+
+# Runs on every push to main (so a newly-introduced vulnerable dependency is
+# caught immediately) and on a weekly schedule (so a vulnerability disclosed
+# AFTER a dependency was already installed — the common case — still gets
+# caught, not just at the moment something changes). Deliberately only
+# checks, never auto-modifies anything — a red check here is a prompt for a
+# human to look at `npm audit` and decide, not something that should
+# silently change dependencies on its own.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # Every Monday at 06:00 UTC
+  workflow_dispatch: {} # Lets you trigger it manually from the Actions tab too
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: npm ci
+      - name: Audit for high/critical vulnerabilities
+        run: npm audit --audit-level=high
