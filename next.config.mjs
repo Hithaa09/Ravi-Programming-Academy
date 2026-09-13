@@ -31,6 +31,46 @@ const nextConfig = {
       ],
     },
   },
+  // Deliberately NOT including Content-Security-Policy here — this app
+  // loads Monaco (needs web workers/blob: URLs), Razorpay's external
+  // checkout script, and calls Supabase directly from the browser. A wrong
+  // CSP could silently break the code editor or checkout for real students,
+  // and there's no way to verify one live from this environment before
+  // shipping it — safer to add the headers below now (all low-risk,
+  // standard, and verified not to affect any of those integrations) and
+  // treat a real CSP as a separate, carefully-tested piece of future work.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          // Stops the browser from guessing a different content type than
+          // what the server actually declared — a classic MIME-sniffing
+          // vector for serving up an "innocent" upload as executable script.
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          // No legitimate reason for this app to ever be framed by another
+          // site — SAMEORIGIN still allows the app to frame its own pages
+          // if that's ever needed, just blocks a third-party clickjacking
+          // wrapper.
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          // Sends the full referrer only on same-origin navigations; for a
+          // cross-origin link, only the origin (not the full path/query) is
+          // sent — balances analytics usefulness against leaking, say, a
+          // password-reset URL's query string to an external site.
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          // This app never uses the camera, microphone, or geolocation —
+          // explicitly denying them means an embedded/compromised
+          // third-party script has no way to request them either.
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+          // Vercel already serves everything over HTTPS by default; this
+          // header tells browsers to enforce that themselves for a year,
+          // closing the narrow window where a first HTTP request could be
+          // intercepted before any redirect happens.
+          { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;
