@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   title: "Privacy Policy — Ravi Programming Academy",
 };
 
-const LAST_UPDATED = "July 29, 2026";
+const LAST_UPDATED = "September 13, 2026";
 
 export default function PrivacyPolicyPage() {
   return (
@@ -26,8 +26,9 @@ export default function PrivacyPolicyPage() {
           <li><strong className="text-on-surface">Submissions</strong> — the code and SQL queries you write and submit, along with the verdict, execution time, and memory usage returned for each one.</li>
           <li><strong className="text-on-surface">Account activity</strong> — problems solved, submission history, streaks, and leaderboard standing, used to build your dashboard and progress statistics.</li>
           <li><strong className="text-on-surface">Basic technical data</strong> — sign-in timestamps and, for signup, login, and password-reset requests specifically, your IP address, which we use briefly to prevent automated abuse (see Section 5).</li>
+          <li><strong className="text-on-surface">Purchase records</strong> — if you buy lifetime access, we store the transaction amount, its status, and a payment reference from Razorpay, our payment processor, so we can confirm your purchase and grant access. See Section 6 for details.</li>
         </ul>
-        <p>We do not collect payment information, government-issued IDs, or any data unrelated to using the platform.</p>
+        <p>We never see or store your card number or other card details — those are handled entirely by Razorpay. We also do not collect government-issued IDs or any data unrelated to using the platform.</p>
       </PolicySection>
 
       <PolicySection heading="2. How We Use Your Information">
@@ -83,7 +84,18 @@ export default function PrivacyPolicyPage() {
         </p>
       </PolicySection>
 
-      <PolicySection heading="6. Data Security">
+      <PolicySection heading="6. Payments via Razorpay">
+        <p>
+          If you purchase lifetime access, payment is processed by Razorpay, a third-party payment processor.
+          Razorpay collects and handles your card or payment method details directly — we never see, receive,
+          or store your card number or other payment credentials. What we do store, on our own side, is a
+          record of the transaction itself: the amount, its status, and a payment reference Razorpay gives us,
+          which we use to confirm your purchase and grant you access. Refund requests are handled as described
+          in our Terms of Service.
+        </p>
+      </PolicySection>
+
+      <PolicySection heading="7. Data Security">
         <p>We take reasonable, practical steps to protect your information:</p>
         <ul className="list-disc pl-5 space-y-1.5">
           <li>Passwords are never stored by us directly — they are held and hashed by Supabase, our authentication provider.</li>
@@ -97,19 +109,19 @@ export default function PrivacyPolicyPage() {
         </p>
       </PolicySection>
 
-      <PolicySection heading="7. Data Retention">
+      <PolicySection heading="8. Data Retention">
         <p>
           We retain your account information and submission history for as long as your account remains
           active, since your submission history is what your dashboard, streaks, and progress tracking are
           built from. If your account is suspended, your data is kept but your access is restricted until an
           administrator reinstates it. If you would like your account and associated data deleted, contact
-          us using the information in Section 9 — we will remove your account and personal information
+          us using the information in Section 10 — we will remove your account and personal information
           within a reasonable time, except where a short retention period is needed to prevent fraud or
           abuse of the platform.
         </p>
       </PolicySection>
 
-      <PolicySection heading="8. Your Rights and Choices">
+      <PolicySection heading="9. Your Rights and Choices">
         <p>You can:</p>
         <ul className="list-disc pl-5 space-y-1.5">
           <li>Update your full name and password at any time from your account Settings page.</li>
@@ -119,21 +131,21 @@ export default function PrivacyPolicyPage() {
         <p>
           Some of these — such as changing your email address or deleting your account — currently require
           contacting an administrator rather than a self-service button in the app, since this platform is
-          designed for a small, instructor-managed group of students. See Section 9 for how to reach us.
+          designed for a small, instructor-managed group of students. See Section 10 for how to reach us.
         </p>
       </PolicySection>
 
-      <PolicySection heading="9. Contact Us">
+      <PolicySection heading="10. Contact Us">
         <p>
           If you have questions about this Privacy Policy, or want to access, correct, or delete your data,
           contact your course administrator or reach us at{" "}
-          <a href="mailto:privacy@raviprogrammingacademy.com" className="text-secondary hover:underline">
-            privacy@raviprogrammingacademy.com
+          <a href="mailto:raviprogrammingacademyweb@gmail.com" className="text-secondary hover:underline">
+            raviprogrammingacademyweb@gmail.com
           </a>.
         </p>
       </PolicySection>
 
-      <PolicySection heading="10. Changes to This Policy">
+      <PolicySection heading="11. Changes to This Policy">
         <p>
           We may update this Privacy Policy from time to time as the platform changes. If we make material
           changes, we will update the &quot;Last updated&quot; date at the top of this page. Continuing to

@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   title: "Terms of Service — Ravi Programming Academy",
 };
 
-const LAST_UPDATED = "July 29, 2026";
+const LAST_UPDATED = "September 13, 2026";
 
 export default function TermsOfServicePage() {
   return (
@@ -56,7 +56,7 @@ export default function TermsOfServicePage() {
           including for the acceptable-use violations described in Section 3, or if your account shows signs
           of being compromised or used for automated abuse. Where practical, we will try to notify you of the
           reason. If you believe your account was suspended in error, contact us using the information in
-          Section 8.
+          Section 9.
         </p>
       </PolicySection>
 
@@ -73,7 +73,21 @@ export default function TermsOfServicePage() {
         </p>
       </PolicySection>
 
-      <PolicySection heading="6. Service Availability">
+      <PolicySection heading="6. Payments and Refunds">
+        <p>
+          Some problems and features require a one-time purchase of lifetime access. Prices are shown before
+          you pay, and payment is processed securely by Razorpay — we never see or store your card number or
+          other card details. We do store a record of the transaction itself (the amount, its status, and a
+          payment reference from Razorpay), which is used to confirm your purchase and grant access.
+        </p>
+        <p>
+          Refunds are considered on a case-by-case basis rather than under a fixed automatic policy. If
+          you&apos;d like to request a refund, contact us using the information in Section 9 and we will
+          review your request.
+        </p>
+      </PolicySection>
+
+      <PolicySection heading="7. Service Availability">
         <p>
           The platform runs on a single server and depends on third-party services, including our
           authentication provider and code execution service. We aim to keep the platform available and
@@ -83,7 +97,7 @@ export default function TermsOfServicePage() {
         </p>
       </PolicySection>
 
-      <PolicySection heading="7. Limitation of Liability">
+      <PolicySection heading="8. Limitation of Liability">
         <p>
           The platform is provided &quot;as is&quot;, for educational use, without warranties of any kind. To
           the fullest extent permitted by law, Ravi Programming Academy is not liable for any indirect,
@@ -93,13 +107,14 @@ export default function TermsOfServicePage() {
         </p>
       </PolicySection>
 
-      <PolicySection heading="8. Changes to These Terms">
+      <PolicySection heading="9. Changes to These Terms and Contact Us">
         <p>
           We may update these Terms as the platform evolves. When we do, we will update the &quot;Last
           updated&quot; date at the top of this page. Continuing to use the platform after an update means
-          you accept the revised Terms. If you have questions about these Terms, contact us at{" "}
-          <a href="mailto:support@raviprogrammingacademy.com" className="text-secondary hover:underline">
-            support@raviprogrammingacademy.com
+          you accept the revised Terms. If you have questions about these Terms, including refund requests
+          described in Section 6, contact us at{" "}
+          <a href="mailto:raviprogrammingacademyweb@gmail.com" className="text-secondary hover:underline">
+            raviprogrammingacademyweb@gmail.com
           </a>.
         </p>
       </PolicySection>
