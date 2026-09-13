@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { validateNewPassword } from "@/lib/password-policy";
+import { isPasswordReused, recordPasswordChange } from "@/lib/auth/password-history";
 
 export interface AuthResult {
   error: string | null;
@@ -184,9 +185,17 @@ export async function updatePassword(password: string): Promise<AuthResult> {
   if (validationError) return { error: validationError };
 
   const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "You must be signed in." };
+
+  if (await isPasswordReused(user.id, password)) {
+    return { error: "You've used that password recently. Please choose a different one." };
+  }
 
   const { error } = await supabase.auth.updateUser({ password });
 
   if (error) return { error: error.message };
+
+  await recordPasswordChange(user.id, password);
   return { error: null };
 }

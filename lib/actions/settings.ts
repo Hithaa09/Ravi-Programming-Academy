@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
 import { logError } from "@/lib/log";
 import { validateNewPassword } from "@/lib/password-policy";
+import { isPasswordReused, recordPasswordChange } from "@/lib/auth/password-history";
 
 export type SettingsResult = { error: string } | { success: true };
 
@@ -86,6 +87,17 @@ export async function updatePassword(currentPassword: string, newPassword: strin
   });
   if (reauthError) return { error: "Current password is incorrect." };
 
+  // Checked explicitly (not just via history) since a student's very first
+  // password change has no history yet — this catches "change" attempts
+  // that don't actually change anything, which the history check alone
+  // wouldn't on a first-ever change.
+  if (newPassword === currentPassword) {
+    return { error: "New password must be different from your current password." };
+  }
+  if (await isPasswordReused(user.id, newPassword)) {
+    return { error: "You've used that password recently. Please choose a different one." };
+  }
+
   const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
   if (updateError) {
     logError("Failed to update password", {
@@ -95,5 +107,6 @@ export async function updatePassword(currentPassword: string, newPassword: strin
     return { error: "Something went wrong. Please try again." };
   }
 
+  await recordPasswordChange(user.id, newPassword);
   return { success: true };
 }

@@ -124,9 +124,27 @@ model Profile {
   sqlSubmissions         SqlSubmission[]
   programmingSubmissions ProgrammingSubmission[]
   purchases              Purchase[]
+  passwordHistory        PasswordHistory[]
 
   @@index([role, status])
   @@map("profiles")
+}
+
+// Independent of Supabase Auth's own password storage, which this app has no
+// read access to (and shouldn't) — every successful password change records
+// its own hash here (see lib/auth/password-history.ts), so a new password
+// can be checked against the student's recent ones without ever touching
+// Supabase's internal storage. Pruned to the most recent few entries per
+// student on every write, so this never grows unbounded.
+model PasswordHistory {
+  id           Int      @id @default(autoincrement())
+  studentId    String
+  profile      Profile  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  @@index([studentId])
+  @@map("password_history")
 }
 
 // Auditable purchase history, kept separate from Profile.hasLifetimeAccess
