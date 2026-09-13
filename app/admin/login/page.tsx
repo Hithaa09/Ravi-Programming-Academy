@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { adminSignIn, adminVerifyMfaLogin } from "@/lib/auth/actions";
+import TurnstileWidget from "@/components/TurnstileWidget";
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -18,12 +19,13 @@ export default function AdminLoginPage() {
   // switches the form to the "enter your code" step instead of finishing.
   const [mfaFactorId, setMfaFactorId] = useState<string | null>(null);
   const [mfaCode, setMfaCode] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState("");
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setLoading(true);
-    const result = await adminSignIn(email, password);
+    const result = await adminSignIn(email, password, turnstileToken);
     setLoading(false);
     if (result.error) { setError(result.error); return; }
     if (result.requiresMfa && result.mfaFactorId) {
@@ -128,6 +130,7 @@ export default function AdminLoginPage() {
                     </button>
                   </div>
                 </div>
+                <TurnstileWidget onVerify={setTurnstileToken} onExpire={() => setTurnstileToken("")} />
                 {error && (
                   <p className="font-label-md text-label-md text-error">{error}</p>
                 )}
