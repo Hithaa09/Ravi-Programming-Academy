@@ -158,9 +158,21 @@ export async function resetPasswordEmail(email: string): Promise<AuthResult> {
 
   const supabase = createClient();
 
+  // redirectTo here becomes {{ .RedirectTo }} in the Reset Password email
+  // template (Supabase Dashboard → Authentication → Emails → Templates) —
+  // that template MUST link to {{ .RedirectTo }}&token_hash={{ .TokenHash
+  // }}&type=recovery (app/auth/confirm/route.ts), NOT the default
+  // {{ .ConfirmationURL }}. ConfirmationURL points at Supabase's own
+  // /auth/v1/verify endpoint using the PKCE code flow, which requires a
+  // secret stored in the browser that submitted this request — but a
+  // password-reset link is opened from an email client, routinely in a
+  // completely different browser/device, so that exchange reliably failed
+  // (silently landing back on /login with no explanation). verifyOtp via
+  // token_hash needs nothing beyond what's already in the link, so it works
+  // regardless of where it's opened.
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "";
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${siteUrl}/auth/callback?next=/reset-password`,
+    redirectTo: `${siteUrl}/auth/confirm?next=/reset-password`,
   });
 
   if (error) return { error: error.message };

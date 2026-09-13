@@ -34,6 +34,8 @@ function LoginPageInner() {
       setError("Your account has been suspended. Please contact your administrator.");
     } else if (err === "no_profile") {
       setError("Your account could not be found. Please contact your administrator.");
+    } else if (err === "invalid_reset_link") {
+      setError("That password reset link is invalid or has expired. Please request a new one.");
     }
   }, [searchParams]);
 
@@ -151,10 +153,10 @@ grow();`}
               <p className="font-body-lg text-body-lg text-on-surface-variant mt-2 mb-5 md:mb-8">Continue your coding journey.</p>
               <form className="space-y-4 md:space-y-5" onSubmit={handleLogin}>
                 <div>
-                  <label className="font-label-md text-label-md font-bold text-on-surface block mb-2">Email or Username</label>
+                  <label className="font-label-md text-label-md font-bold text-on-surface block mb-2">Email</label>
                   <input
-                    type="text"
-                    placeholder="Enter your email or username"
+                    type="email"
+                    placeholder="Enter your email"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
                     required
